@@ -11,7 +11,7 @@ class GlobalConfig:
         if getattr(sys, 'frozen', False):
             self.current_dir = os.path.dirname(sys.executable)
         else:
-            self.current_dir = os.path.dirname(os.path.abspath(__file__))
+            self.current_dir = os.path.abspath(__file__)
 
         config_path = os.path.join(self.current_dir, 'config.ini')
         self.config = configparser.ConfigParser()
@@ -23,8 +23,19 @@ class GlobalConfig:
 
 
         self.device_serial = self.get_config('Android', 'serial', '')
+        
+        platform_map = {
+            "win32": "windows",
+            "linux": "linux",
+            "darwin": "macos"
+        }
+        platform_dir = platform_map.get(sys.platform, sys.platform)
 
-        self.renderdoc_py_path = os.path.join(self.current_dir, "pymodules")
+        self.renderdoc_lib_path = os.path.join(
+            os.path.dirname(self.current_dir), 
+            "lib", 
+            platform_dir
+        )
 
         #Network
         self.bind_port = int(self.get_config('Network', 'listen_port', '16688'))
@@ -44,14 +55,15 @@ class GlobalConfig:
             return default
 
     def setup_python_env(self):
-        if self.renderdoc_py_path not in sys.path:
-            sys.path.append(self.renderdoc_py_path)
+        print (f"{self.renderdoc_lib_path}")
+        if self.renderdoc_lib_path not in sys.path:
+            sys.path.append(self.renderdoc_lib_path)
 
         if hasattr(os, 'add_dll_directory'):
             os.add_dll_directory(self.current_dir)
-            os.add_dll_directory(self.renderdoc_py_path)
+            os.add_dll_directory(self.renderdoc_lib_path)
         else:
-            os.environ["PATH"] = self.renderdoc_py_path + self.current_dir + os.pathsep + os.environ["PATH"]
+            os.environ["PATH"] = self.renderdoc_lib_path + self.current_dir + os.pathsep + os.environ["PATH"]
 
 
 
