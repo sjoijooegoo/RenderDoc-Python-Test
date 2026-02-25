@@ -9,9 +9,9 @@ import configparser
 class GlobalConfig:
     def __init__(self):
         if getattr(sys, 'frozen', False):
-            self.current_dir = os.path.dirname(sys.executable)
+            self.current_dir = os.path.dirname(os.path.dirname(sys.executable))
         else:
-            self.current_dir = os.path.abspath(__file__)
+            self.current_dir = os.path.dirname(os.path.abspath(__file__))
 
         config_path = os.path.join(self.current_dir, 'config.ini')
         self.config = configparser.ConfigParser()
@@ -32,7 +32,7 @@ class GlobalConfig:
         platform_dir = platform_map.get(sys.platform, sys.platform)
 
         self.renderdoc_lib_path = os.path.join(
-            os.path.dirname(self.current_dir), 
+            self.current_dir, 
             "lib", 
             platform_dir
         )
@@ -46,6 +46,7 @@ class GlobalConfig:
         self.android_exe_path = self.android_exe_path = f"{self.android_package_name}/{self.android_activity_name}"
         #save
         self.rdc_save_dir = self.get_config('path', 'save_dir_abs', os.path.join(self.current_dir, "save"))
+        print (f"rdc_save_dir: {self.rdc_save_dir}")
 
 
     def get_config(self, section, key, default):
