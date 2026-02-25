@@ -4,3 +4,5 @@ save/
 tools/*
 !tools/pkg.sh
 !tools/pkg.bat
+.venv/
+.vscode/
