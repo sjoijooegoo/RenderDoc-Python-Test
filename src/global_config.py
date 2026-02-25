@@ -57,12 +57,11 @@ class GlobalConfig:
             return default
 
     def setup_python_env(self):
-        print (f"{self.renderdoc_lib_path}")
         if self.renderdoc_lib_path not in sys.path:
             sys.path.append(self.renderdoc_lib_path)
-        print (f"loaded libxcb-keysyms.so.1 from {self.renderdoc_lib_path}")
-        #ctypes.CDLL(os.path.join(self.renderdoc_lib_path, "libxcb-keysyms.so.1"))
-        if hasattr(os, 'add_dll_directory'):
+        if sys.platform == 'linux':
+            ctypes.CDLL(os.path.join(self.renderdoc_lib_path, "libxcb-keysyms.so.1"))
+        elif sys.platform == 'Win32' and hasattr(os, 'add_dll_directory'):
             os.add_dll_directory(self.current_dir)
             os.add_dll_directory(self.renderdoc_lib_path)
         else:
