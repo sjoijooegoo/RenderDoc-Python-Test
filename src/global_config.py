@@ -4,6 +4,7 @@ LastEditors: v_sycisong
 '''
 import os
 import sys
+import ctypes
 import configparser
 
 class GlobalConfig:
@@ -59,7 +60,7 @@ class GlobalConfig:
         print (f"{self.renderdoc_lib_path}")
         if self.renderdoc_lib_path not in sys.path:
             sys.path.append(self.renderdoc_lib_path)
-
+        ctypes.CDLL(self.renderdoc_lib_path)
         if hasattr(os, 'add_dll_directory'):
             os.add_dll_directory(self.current_dir)
             os.add_dll_directory(self.renderdoc_lib_path)
