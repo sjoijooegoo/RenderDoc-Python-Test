@@ -1,0 +1,122 @@
+'''
+author: v_sycisong
+LastEditors: v_sycisong
+'''
+import os
+from datetime import datetime
+import json
+from . import task_manager
+from command_type import CaptureFrameCommandType
+from remote_object import RemoteObject
+from global_config import cfg
+import socket
+import json
+import sys
+from global_config import cfg
+
+
+def init_server_socket():
+
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    try:
+        server_socket.bind((cfg.bind_ip, cfg.bind_port))
+        server_socket.listen(1)
+        print(f"TCP Server模式: {cfg.bind_ip}:{cfg.bind_port}")
+        return server_socket
+    except Exception as e:
+        print(f"无法启动 Socket 服务: {e}")
+        sys.exit(1)
+
+def send_response(conn, command:int, success: bool, msg: str = ""):
+    payload = {
+        "command": command,
+        "success": success,
+        "msg": msg
+    }
+    conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+    
+    
+@task_manager.manager.register
+class TCPServerTask:
+    TASK_ID = "server"
+    def execute(self, args, params):
+        listen_sock = init_server_socket()
+        remote_object = RemoteObject()
+        print("--- 正在运行，等待远程指令 ---")
+        running = True
+        try:
+            while running:
+                conn, addr = listen_sock.accept()
+
+                with conn:
+                    try:
+                        data = conn.recv(1024).decode('utf-8')
+                        if not data: continue
+
+                        command_json = json.loads(data)
+                        command = int(command_json.get("command"))
+                        print(f"收到指令: {command}")
+
+                        if command == CaptureFrameCommandType.Launch_RDC:
+                            try:
+                                remote_object.launch_renderdoc()
+                            except Exception as e:
+                                print(f"启动renderdoc出错: {e}")
+                                send_response(conn, command, False, str(e))
+                            send_response(conn, command, True)
+
+                        elif command == CaptureFrameCommandType.Launch_APP:
+                            try:
+                                remote_object.launch_capture_app()
+                            except Exception as e:
+                                print(f"启动app出错: {e}")
+                                send_response(conn, command, False, str(e))
+                            send_response(conn, command, True)
+
+                        elif command == CaptureFrameCommandType.APP_CAPTURE:
+                            time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            save_name = command_json.get("save_name", f"Cap_{time_str}") + ".rdc"
+                            if not save_name.endswith(".rdc"):
+                                save_name += ".rdc"
+                            try:
+                                remote_object.capture(save_name)
+                            except Exception as e:
+                                print(f"截帧出错: {e}")
+                                send_response(conn, command, False, str(e))
+                            send_response(conn,command, True)
+
+                        elif command == CaptureFrameCommandType.SET_DIR:
+                            new_path = command_json.get("new_path")
+                            try:
+                                os.makedirs(new_path, exist_ok=True)
+                                cfg.rdc_save_dir = new_path
+                            except Exception as e:
+                                print(f"设置新路径出错: {e}")
+                                send_response(conn, command, False,str(e))
+                            send_response(conn, command, True)
+
+                        elif command == CaptureFrameCommandType.SET_DEVICE_SERIAL:
+                            device_serial = command_json.get("device_serial")
+                            print(f"设置使用的设备序列号:{device_serial}")
+                            send_response(conn, command, True)
+
+                        elif command == CaptureFrameCommandType.CLOSE_CONNNET:
+                            print("收到停止服务指令，正在退出...")
+                            send_response(conn, command, True)
+                            running = False
+
+                        else:
+                            send_response(conn, command,False, "Unknown command.")
+
+                    except Exception as e:
+                        send_response(conn, command,False, str(e))
+                        print(f"处理数据出错: {e}")
+
+        except KeyboardInterrupt:
+            print("停止服务")
+
+        finally:
+            listen_sock.close()

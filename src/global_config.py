@@ -47,7 +47,6 @@ class GlobalConfig:
         self.android_exe_path = self.android_exe_path = f"{self.android_package_name}/{self.android_activity_name}"
         #save
         self.rdc_save_dir = self.get_config('path', 'save_dir_abs', os.path.join(self.current_dir, "save"))
-        print (f"rdc_save_dir: {self.rdc_save_dir}")
 
 
     def get_config(self, section, key, default):
