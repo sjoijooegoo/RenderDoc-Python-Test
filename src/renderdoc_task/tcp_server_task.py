@@ -12,7 +12,6 @@ from global_config import cfg
 import socket
 import json
 import sys
-from global_config import cfg
 
 
 def init_server_socket():
