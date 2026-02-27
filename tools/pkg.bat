@@ -1,5 +1,5 @@
 @echo off
-set PYINSTALLER_PATH=D:\dev\python\python36\Scripts\pyinstaller.exe
+set PYINSTALLER_PATH=C:\Users\v_sycisong\AppData\Local\Programs\Python\Python310\Scripts\pyinstaller.exe
 set BIN_DIR=..\bin
 
 echo [1/3] 开始打包...
