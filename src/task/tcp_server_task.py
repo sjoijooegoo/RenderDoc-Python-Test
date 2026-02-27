@@ -47,25 +47,19 @@ class TCPServerTask:
         print("--- 正在运行，等待远程指令 ---")
         running = True
         try:
-            conn, addr = listen_sock.accept()
-            buffer = ""
             while running:
-                try:
-                    data = conn.recv(1024).decode('utf-8')
-                    if not data:
-                        print("客户端已断开连接")
-                        break
-                    buffer += data
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        if not line:
-                            continue
+                conn, addr = listen_sock.accept()
+
+                with conn:
+                    try:
+                        data = conn.recv(1024).decode('utf-8')
+                        if not data: continue
                         try:
-                            command_json = json.loads(line)
+                            command_json = json.loads(data)
                             command = int(command_json.get("command"))
                             print(f"收到指令: {command}")
                         except json.JSONDecodeError:
-                            print(f"JSON 解析失败: {line}")
+                            print(f"JSON 解析失败: {data}")
                             continue
 
                         if command == CaptureFrameCommandType.Launch_RDC:
@@ -115,16 +109,12 @@ class TCPServerTask:
                         else:
                             send_response(conn, command,False, "Unknown command.")
 
-                except Exception as e:
-                    send_response(conn, command,False, str(e))
-                    print(f"处理数据出错: {e}")
+                    except Exception as e:
+                        send_response(conn, command,False, str(e))
+                        print(f"处理数据出错: {e}")
 
         except KeyboardInterrupt:
             print("停止服务")
 
         finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
             listen_sock.close()
