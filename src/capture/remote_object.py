@@ -5,7 +5,6 @@ import os
 from time import sleep
 import time
 
-from global_config import cfg
 import renderdoc as rd
 
 
@@ -17,10 +16,10 @@ def ping_remote(remote, kill_event):
 
 
 class RemoteObject:
-    def __init__(self):
+    def __init__(self, device_serial, exe_path, protocol_to_use = "adb", client_name = "remote_object"):
 
         self.url = ""
-        self.protocol_to_use = "adb"
+        self.protocol_to_use = protocol_to_use
         self.device = None
         self.device_name = None
         self.remote_server = None
@@ -32,28 +31,28 @@ class RemoteObject:
         self.opts.captureCallstacks = False
         self.opts.refAllResources = True
         self.opts.captureAllCmdLists = False
-
+        self.exe_path = exe_path
         self.working_dir = ""
-        self.exe_path = cfg.android_exe_path
         self.cmd_line = ""
         self.env = []
-        self.client_name = "remote_object"
-
+        self.client_name = client_name
+        self.device_serial = device_serial
+        
         self.app_target = None
         self.app_kill_event = None
         self.app_ping_thread = None
 
 
-    def launch_renderdoc(self) -> bool:
+    def launch_renderdoc(self):
         protocol = rd.GetDeviceProtocolController(self.protocol_to_use)
 
         devices = protocol.GetDevices()
 
-        if cfg.device_serial in devices:
-            self.device = devices[cfg.device_serial]
-            print(f"使用设备: {cfg.device_serial}")
+        if self.device_serial in devices:
+            self.device = devices[self.device_serial]
+            print(f"使用设备: {self.device_serial}")
         else:
-            print(f"设备 {cfg.device_serial} 未找到，使用默认设备")
+            print(f"设备 {self.device_serial} 未找到，使用默认设备")
             if len(devices) == 0:
                 raise RuntimeError(f"no {self.protocol_to_use} devices connected")
 
@@ -75,11 +74,9 @@ class RemoteObject:
             result, self.remote_server = rd.CreateRemoteServerConnection(self.url)
 
         if self.remote_server is None:
-            return False
+            raise RuntimeError(f"无法建立远程服务器连接: {result}")
 
-        return True
-
-    def launch_capture_app(self) -> bool:
+    def launch_capture_app(self) :
 
         if self.remote_server is None:
             self.launch_renderdoc()
@@ -97,11 +94,9 @@ class RemoteObject:
             self.app_kill_event.set()
             self.app_ping_thread.join()
             self.remote_server.ShutdownServerAndConnection()
-            return False
+            raise RuntimeError(f"无法启动远程应用")
 
-        return True
-
-    def capture(self, file_name, frame_count = 1):
+    def capture(self, frame_count = 1, file_name = "",  save_dir = ""):
 
         if self.remote_server is None:
             print("未启动远程应用")
@@ -120,11 +115,14 @@ class RemoteObject:
         cap_path = msg.newCapture.path
         print(f"远程文件路径: {cap_path}")
 
-        if not os.path.exists(cfg.rdc_save_dir):
-            os.makedirs(cfg.rdc_save_dir)
+        if save_dir == "" or file_name == "":
+            #不保存至本地
+            return
+        
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
 
-        file_path = os.path.join(cfg.rdc_save_dir, file_name)
+        file_path = os.path.join(save_dir, file_name)
         
         self.remote_server.CopyCaptureFromRemote(cap_path, file_path, None)
         print(f"已保存至: {file_path}")
-        return True

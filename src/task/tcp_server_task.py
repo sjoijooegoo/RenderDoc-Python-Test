@@ -6,9 +6,9 @@ import os
 from datetime import datetime
 import json
 from . import task_manager
-from command_type import CaptureFrameCommandType
-from remote_object import RemoteObject
-from global_config import cfg
+from common.command_type import CaptureFrameCommandType
+from capture.remote_object import RemoteObject
+from common.global_config import cfg
 import socket
 import json
 import sys
@@ -43,21 +43,30 @@ class TCPServerTask:
     TASK_ID = "server"
     def execute(self, args, params):
         listen_sock = init_server_socket()
-        remote_object = RemoteObject()
+        remote_object = RemoteObject(cfg.device_serial, cfg.android_exe_path, "adb")
         print("--- 正在运行，等待远程指令 ---")
         running = True
         try:
+            conn, addr = listen_sock.accept()
+            buffer = ""
             while running:
-                conn, addr = listen_sock.accept()
-
-                with conn:
-                    try:
-                        data = conn.recv(1024).decode('utf-8')
-                        if not data: continue
-
-                        command_json = json.loads(data)
-                        command = int(command_json.get("command"))
-                        print(f"收到指令: {command}")
+                try:
+                    data = conn.recv(1024).decode('utf-8')
+                    if not data:
+                        print("客户端已断开连接")
+                        break
+                    buffer += data
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        if not line:
+                            continue
+                        try:
+                            command_json = json.loads(line)
+                            command = int(command_json.get("command"))
+                            print(f"收到指令: {command}")
+                        except json.JSONDecodeError:
+                            print(f"JSON 解析失败: {line}")
+                            continue
 
                         if command == CaptureFrameCommandType.Launch_RDC:
                             try:
@@ -76,12 +85,8 @@ class TCPServerTask:
                             send_response(conn, command, True)
 
                         elif command == CaptureFrameCommandType.APP_CAPTURE:
-                            time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            save_name = command_json.get("save_name", f"Cap_{time_str}") + ".rdc"
-                            if not save_name.endswith(".rdc"):
-                                save_name += ".rdc"
                             try:
-                                remote_object.capture(save_name)
+                                remote_object.capture()
                             except Exception as e:
                                 print(f"截帧出错: {e}")
                                 send_response(conn, command, False, str(e))
@@ -110,12 +115,16 @@ class TCPServerTask:
                         else:
                             send_response(conn, command,False, "Unknown command.")
 
-                    except Exception as e:
-                        send_response(conn, command,False, str(e))
-                        print(f"处理数据出错: {e}")
+                except Exception as e:
+                    send_response(conn, command,False, str(e))
+                    print(f"处理数据出错: {e}")
 
         except KeyboardInterrupt:
             print("停止服务")
 
         finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
             listen_sock.close()

@@ -3,10 +3,10 @@ author: v_sycisong
 LastEditors: v_sycisong
 '''
 
-from global_config import cfg
+from common.global_config import cfg
 cfg.setup_python_env()
 
-import renderdoc_task
+import task
 
 if __name__ == "__main__":
-    renderdoc_task.manager.execute_task()
+    task.manager.execute_task()

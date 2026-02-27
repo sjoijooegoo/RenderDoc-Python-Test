@@ -10,9 +10,9 @@ import configparser
 class GlobalConfig:
     def __init__(self):
         if getattr(sys, 'frozen', False):
-            self.current_dir = os.path.dirname(os.path.dirname(sys.executable))
+            self.current_dir = os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
         else:
-            self.current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
         config_path = os.path.join(self.current_dir, 'config.ini')
         self.config = configparser.ConfigParser()
