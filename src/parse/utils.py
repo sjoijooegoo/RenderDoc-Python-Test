@@ -27,7 +27,7 @@ def normalize_resource_id(value: Any) -> str:
     if value is None:
         return ""
     as_str = str(value)
-    return "" if as_str in {"0", "ResourceId::Null"} else as_str
+    return "" if as_str in {"0", "ResourceId::0", "ResourceId::Null"} else as_str
 
 
 def stable_unique_sorted(values: Iterable[Any]) -> List[str]:

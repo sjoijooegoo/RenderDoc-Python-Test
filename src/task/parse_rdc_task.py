@@ -73,8 +73,10 @@ class ParseRdcTask:
             emit_shaders = True
             source_output_dir = capture_folder / "rdc_shader" if export_shader_assets else None
             material_output_dir = capture_folder / "rdc_material"
+            material_instance_output_dir = capture_folder / "rdc_material_instance"
             texture_output_dir = capture_folder / "rdc_texture"
             shader_output_dir = capture_folder / "rdc_shader"
+            pass_output_dir = capture_folder / "rdc_pass"
 
             print(f"rdc_parse start: {rdc_path}")
             print(
@@ -91,8 +93,10 @@ class ParseRdcTask:
                 emit_shaders=emit_shaders,
                 source_output_dir=str(source_output_dir) if source_output_dir is not None else None,
                 material_output_dir=str(material_output_dir),
+                material_instance_output_dir=str(material_instance_output_dir),
                 texture_output_dir=str(texture_output_dir),
                 shader_output_dir=str(shader_output_dir),
+                pass_output_dir=str(pass_output_dir),
                 export_texture_images=export_texture_assets,
             )
 
@@ -104,8 +108,11 @@ class ParseRdcTask:
             tokens = []
             for key in (
                 "material_count",
+                "material_instance_count",
                 "texture_count",
-                "shader_count"
+                "shader_count",
+                "pass_count",
+                "texture_export_error_count",
             ):
                 if key in summary:
                     tokens.append(f"{key}={summary.get(key, 0)}")
@@ -114,14 +121,20 @@ class ParseRdcTask:
             artifacts = payload.get("artifacts", {})
             if isinstance(artifacts, dict):
                 material_info = artifacts.get("materials", {})
+                material_instance_info = artifacts.get("material_instances", {})
                 texture_info = artifacts.get("textures", {})
                 shader_info = artifacts.get("shaders", {})
+                pass_info = artifacts.get("passes", {})
                 if isinstance(material_info, dict) and material_info.get("index"):
                     print(f"materials index: {material_info.get('index')}")
+                if isinstance(material_instance_info, dict) and material_instance_info.get("index"):
+                    print(f"material instances index: {material_instance_info.get('index')}")
                 if isinstance(texture_info, dict) and texture_info.get("index"):
                     print(f"textures index: {texture_info.get('index')}")
                 if isinstance(shader_info, dict) and shader_info.get("index"):
                     print(f"shaders index: {shader_info.get('index')}")
+                if isinstance(pass_info, dict) and pass_info.get("index"):
+                    print(f"passes index: {pass_info.get('index')}")
             print("summary: " + ", ".join(tokens) if tokens else "summary: (empty)")
 
         except Exception as exc:

@@ -23,8 +23,10 @@ class RDCParser:
         emit_shaders: bool = False,
         source_output_dir: str | None = None,
         material_output_dir: str | None = None,
+        material_instance_output_dir: str | None = None,
         texture_output_dir: str | None = None,
         shader_output_dir: str | None = None,
+        pass_output_dir: str | None = None,
         export_texture_images: bool = True,
     ) -> Dict[str, Any]:
         return self._parser.parse(
@@ -34,8 +36,10 @@ class RDCParser:
             emit_shaders=emit_shaders,
             source_output_dir=source_output_dir,
             material_output_dir=material_output_dir,
+            material_instance_output_dir=material_instance_output_dir,
             texture_output_dir=texture_output_dir,
             shader_output_dir=shader_output_dir,
+            pass_output_dir=pass_output_dir,
             export_texture_images=export_texture_images,
         )
 
