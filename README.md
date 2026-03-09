@@ -50,7 +50,7 @@ RenderDoc-Python-Test/
 
 ## 环境要求
 
-- Python 3.9+（建议 3.10）
+- Python 3.10
 - Git（若拉取含 LFS 文件，需安装 Git LFS）
 - ADB（如需 Android 远程截帧）
 
