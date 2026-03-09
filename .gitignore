@@ -1,0 +1,10 @@
+.idea/
+__pycache__/
+save/
+tools/*
+!tools/pkg.sh
+!tools/pkg.bat
+.venv/
+.vscode/
+output/
+.crossnote
