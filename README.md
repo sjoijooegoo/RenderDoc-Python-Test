@@ -150,15 +150,9 @@ python src/main.py server
 
 ---
 
-## RDC 解析输出（摘要）
+## RDC 解析输出
 
-`rdc_parse` 输出 JSON 主要包含：
-
-- `summary`：材质/Shader 统计
-- `materials`：按 `shader + texture` 聚合后的材质条目
-- `shaders`：Shader 去重信息、源码行数、使用次数等
-
-完整方案与字段设计见：`docs/rdc_parse.md`
+完整文档见：`docs/rdc_parse.md`
 
 ---
 

@@ -1,12 +1,14 @@
 ﻿from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
 from common import cfg
-from . import task_manager
 from parse.material_shader_parser import parse_capture_material_shader
+
+from . import task_manager
 
 
 def _resolve_path(path_value: str, base_dir: Optional[Path] = None) -> Path:
@@ -24,6 +26,12 @@ def _to_bool(value: Optional[str], default: bool = False) -> bool:
     if value is None:
         return default
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _safe_name(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    safe = safe.strip("._")
+    return safe or "capture"
 
 
 def _find_latest_rdc(save_dir: Path) -> Optional[Path]:
@@ -54,27 +62,67 @@ class ParseRdcTask:
             if not rdc_path.exists() or rdc_path.suffix.lower() != ".rdc":
                 raise RuntimeError(f"invalid rdc file: {rdc_path}")
 
-            output_path = _resolve_path(
-                params.get("output") or params.get("out") or "output/rdc_material_shader.json"
-            )
-            include_source = _to_bool(params.get("include_source"), default=False)
+            output_root = _resolve_path("output")
+            capture_folder = output_root / _safe_name(rdc_path.stem)
+            output_path = capture_folder / "rdc_entry.json"
+
+            schema = "1"
+            export_texture_assets = _to_bool(params.get("export_texture_assets"), default=True)
+            export_shader_assets = _to_bool(params.get("export_shader_assets"), default=True)
+            include_context_events = _to_bool(params.get("include_context_events"), default=False)
+            emit_shaders = True
+            source_output_dir = capture_folder / "rdc_shader" if export_shader_assets else None
+            material_output_dir = capture_folder / "rdc_material"
+            texture_output_dir = capture_folder / "rdc_texture"
+            shader_output_dir = capture_folder / "rdc_shader"
 
             print(f"rdc_parse start: {rdc_path}")
-            payload = parse_capture_material_shader(str(rdc_path), include_source=include_source)
+            print(
+                "rdc_parse options: "
+                f"include_context_events={include_context_events}, emit_shaders=true, "
+                f"export_texture_assets={export_texture_assets}, export_shader_assets={export_shader_assets}"
+            )
+
+            payload = parse_capture_material_shader(
+                str(rdc_path),
+                include_source=export_shader_assets,
+                schema=schema,
+                include_context_events=include_context_events,
+                emit_shaders=emit_shaders,
+                source_output_dir=str(source_output_dir) if source_output_dir is not None else None,
+                material_output_dir=str(material_output_dir),
+                texture_output_dir=str(texture_output_dir),
+                shader_output_dir=str(shader_output_dir),
+                export_texture_images=export_texture_assets,
+            )
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
 
             summary = payload.get("summary", {})
+            tokens = []
+            for key in (
+                "material_count",
+                "texture_count",
+                "shader_count"
+            ):
+                if key in summary:
+                    tokens.append(f"{key}={summary.get(key, 0)}")
+
             print(f"report saved: {output_path}")
-            print(
-                "summary: "
-                f"materials={summary.get('material_count', 0)}, "
-                f"shaders={summary.get('shader_count', 0)}, "
-                f"shader_lines_unique={summary.get('shader_total_lines_unique', 0)}, "
-                f"shader_lines_by_usage={summary.get('shader_total_lines_by_usage', 0)}"
-            )
+            artifacts = payload.get("artifacts", {})
+            if isinstance(artifacts, dict):
+                material_info = artifacts.get("materials", {})
+                texture_info = artifacts.get("textures", {})
+                shader_info = artifacts.get("shaders", {})
+                if isinstance(material_info, dict) and material_info.get("index"):
+                    print(f"materials index: {material_info.get('index')}")
+                if isinstance(texture_info, dict) and texture_info.get("index"):
+                    print(f"textures index: {texture_info.get('index')}")
+                if isinstance(shader_info, dict) and shader_info.get("index"):
+                    print(f"shaders index: {shader_info.get('index')}")
+            print("summary: " + ", ".join(tokens) if tokens else "summary: (empty)")
 
         except Exception as exc:
             print(f"rdc_parse_task error: {exc}")
