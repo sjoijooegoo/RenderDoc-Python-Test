@@ -62,7 +62,7 @@ class ParseRdcTask:
     def execute(self, args, params):
         try:
             save_dir = _resolve_path(params.get("save_dir", cfg.save_dir))
-            rdc_arg = params.get("rdc") or params.get("input") or params.get("file")
+            rdc_arg = params.get("rdc") or params.get("input") or params.get("file") or params.get("path")
 
             if rdc_arg:
                 rdc_path = _resolve_path(rdc_arg, save_dir)
