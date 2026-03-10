@@ -1,12 +1,12 @@
-﻿# RDC Parse 解析框架（中文完整版）
+﻿# RDC Parse 解析框架
 
-本文档定义当前仓库 `rdc_parse` 的生产输出契约（当前版本：`schema_version=1.4.0`）。
+本文档定义当前仓库 `rdc_parse` 的生产输出契约（当前版本：`schema_version=1.5.0`）。
 
 目标：
 
 - 单 `.rdc` 解析
 - manifest 入口驱动
-- Material / MaterialInstance / Texture / Shader / Pass 五类实体落盘
+- Material / Texture / Shader / Pass 四类实体落盘
 - 重资产（纹理图片、shader源码）按参数开关导出
 - 索引可校验（`id/path/sha256`）
 
@@ -31,7 +31,6 @@
 `output/xxx/` 下固定目录：
 
 - `rdc_material/`
-- `rdc_material_instance/`
 - `rdc_texture/`
 - `rdc_shader/`
 - `rdc_pass/`
@@ -59,14 +58,13 @@
 
 ```json
 {
-  "schema_version": "1.4.0",
-  "parser_version": "rdc_parse_v1.4.0",
+  "schema_version": "1.5.0",
+  "parser_version": "rdc_parse_v1.5.0",
   "generated_at": "2026-03-09T12:34:56.123456+00:00",
   "capture_file": "1.rdc",
   "capture_id": "cap:...",
   "summary": {
     "material_count": 296,
-    "material_instance_count": 494,
     "texture_count": 405,
     "shader_count": 233,
     "pass_count": 362,
@@ -74,24 +72,16 @@
   },
   "artifacts": {
     "materials": {
-      "index": "rdc_material/rdc_material_index.json",
-      "count": 296
-    },
-    "material_instances": {
-      "index": "rdc_material_instance/rdc_material_instance_index.json",
-      "count": 494
+      "index": "rdc_material/rdc_material_index.json"
     },
     "textures": {
-      "index": "rdc_texture/rdc_texture_index.json",
-      "count": 405
+      "index": "rdc_texture/rdc_texture_index.json"
     },
     "shaders": {
-      "index": "rdc_shader/rdc_shader_index.json",
-      "count": 233
+      "index": "rdc_shader/rdc_shader_index.json"
     },
     "passes": {
-      "index": "rdc_pass/rdc_pass_index.json",
-      "count": 362
+      "index": "rdc_pass/rdc_pass_index.json"
     }
   }
 }
@@ -105,7 +95,7 @@
 - `capture_file`：仅文件名（不含绝对路径）
 - `capture_id`：由文件元信息生成的 capture 指纹
 - `summary`：快速统计
-- `artifacts`：五类集合入口
+- `artifacts`：四类集合入口
 
 ---
 
@@ -115,12 +105,11 @@
 
 ```json
 {
-  "index": "<relative_index_path>",
-  "count": 123
+  "index": "<relative_index_path>"
 }
 ```
 
-索引项格式（五类统一）：
+索引项格式（四类统一）：
 
 ```json
 [
@@ -141,7 +130,6 @@
 索引文件：
 
 - `rdc_material/rdc_material_index.json`
-- `rdc_material_instance/rdc_material_instance_index.json`
 - `rdc_texture/rdc_texture_index.json`
 - `rdc_shader/rdc_shader_index.json`
 - `rdc_pass/rdc_pass_index.json`
@@ -173,25 +161,7 @@
 }
 ```
 
-### 5.2 MaterialInstance
-
-路径：`rdc_material_instance/<material_instance_id>/rdc_material_instance.json`
-
-```json
-{
-  "material_instance_key": "matinst:...",
-  "material_instance_name": "mi_xxx",
-  "mesh_name": "sm_xxx",
-  "usage_count": 8,
-  "pass_channels": ["MobileBasePass"],
-  "sample_marker_paths": [
-    "Frame .../MobileBasePass/mi_xxx sm_xxx (1 instances)"
-  ],
-  "material_json_path": "rdc_material/mat_xxx/rdc_material.json"
-}
-```
-
-### 5.3 Texture
+### 5.2 Texture
 
 路径：`rdc_texture/<texture_id>/rdc_texture.json`
 
@@ -205,7 +175,7 @@
   "array_size": 1,
   "format": "ASTC_UNORM",
   "texture_compare_key": "texcmp:...",
-  "image_path": "rdc_texture/ResourceId__123/image.png",
+  "image_path": "rdc_texture/_shared_images/img_f3b4...9a.png",
   "image_sha256": "...",
   "export_error": "..."
 }
@@ -214,9 +184,10 @@
 说明：
 
 - `image_path` / `image_sha256` 仅在图片成功导出时存在。
+- 图片文件按内容去重，多个纹理若导出 PNG 内容一致会引用同一个 `image_path`。
 - 导出失败会写 `export_error`。
 
-### 5.4 Shader
+### 5.3 Shader
 
 路径：`rdc_shader/<shader_id>/rdc_shader.json`
 
@@ -229,9 +200,7 @@
   "usage_count": 42,
   "source_files": [
     {
-      "filename": "main.glsl",
-      "line_count": 892,
-      "source_path": "rdc_shader/md5_xxx/main.glsl"
+      "source_path": "rdc_shader/_shared_sources/src_a1b2c3d4e5f6a7b8.glsl"
     }
   ]
 }
@@ -240,8 +209,10 @@
 说明：
 
 - `source_path` 仅在 `export_shader_assets=true` 时存在。
+- 单个源码行数统一看顶层 `source_line_count`，`source_files` 不再重复输出 `line_count`。
+- 源码文件按内容去重，多个 shader 若源码一致会引用同一个 `source_path`。
 
-### 5.5 Pass
+### 5.4 Pass
 
 路径：`rdc_pass/<pass_id>/rdc_pass.json`
 
@@ -257,18 +228,21 @@
     "pipeline_object": ""
   },
   "usage_count": 8,
-  "material_instance_json_paths": [
-    "rdc_material_instance/matinst_xxx/rdc_material_instance.json"
-  ]
+  "material_json_paths": [
+    "rdc_material/mat_xxx/rdc_material.json"
+  ],
+  "material_instance_names": ["mi_xxx"],
+  "mesh_names": ["sm_xxx"]
 }
 ```
 
 说明：
 
-- Pass 第一版仅保留材质实例引用，不直接输出 Texture / Shader 引用。
-- 实体关系为：`Pass -> MaterialInstance -> Material -> Texture/Shader`。
+- Pass 第一版仅保留材质引用，不直接输出 Texture / Shader 引用。
+- 关系可按 `Pass -> Material -> Texture/Shader` 解析。
 - 适合平台按 Pass 维度做分析与对比。
-- `material_instance_name`、`mesh_name`、`pass_channel` 来源于 marker 解析，依赖 capture 内标记质量。
+- `material_instance_names`、`mesh_names`、`pass_channel` 来源于 marker 解析，依赖 capture 内标记质量。
+- `pass_channel` 会做标准化；非标准标签（如含空格、`=`、`::`、括号）会置空字符串。
 
 ---
 
@@ -277,7 +251,6 @@
 - `shader_key`：优先源码 md5（适合跨批次对比）
 - `texture_compare_key`：基于名称/格式/尺寸/mips/数组维度
 - `material_base_key`：由纹理签名 + 采样器签名 + 常量布局签名组合
-- `material_instance_key`：由材质基底 + 实例名 + mesh 名组合签名
 - `pass_key`：由 marker + 输出目标 + 深度目标 + 管线对象等信息签名
 
 ---
@@ -293,7 +266,6 @@
 推荐主键：
 
 - Material：`material_base_key`
-- MaterialInstance：`material_instance_key`
 - Texture：`texture_compare_key`
 - Shader：`shader_key`
 - Pass：`pass_key`
@@ -327,3 +299,26 @@ python src/main.py rdc_parse rdc=E:/captures/1.rdc export_texture_assets=false e
 ```bash
 python src/main.py rdc_parse rdc=E:/captures/1.rdc export_texture_assets=true export_shader_assets=false
 ```
+
+---
+
+## 10. 代码模块拆分（便于扩展）
+
+当前解析器已按实体能力拆分为独立模块：
+
+- `src/parse/modules/texture_module.py`
+  - 纹理收集、纹理导出、纹理 JSON 落盘
+- `src/parse/modules/shader_module.py`
+  - Shader 提取、源码落盘、Shader JSON 落盘
+- `src/parse/modules/material_module.py`
+  - 材质签名构建、Material JSON 落盘
+- `src/parse/modules/pass_module.py`
+  - Pass 特征提取、marker 解析、Pass JSON 落盘
+- `src/parse/rdc_parse_pipeline.py`
+  - 编排层：驱动 action 遍历、聚合关系、写入口索引
+
+扩展建议：
+
+- 新增实体（例如 `mesh`）时，优先新增独立模块文件；
+- 在编排层仅维护关系聚合和 artifacts 索引，不在编排层堆叠实体细节逻辑；
+- 保持模块输入/输出稳定（`extract_*`, `persist_*`），降低跨模块改动成本。

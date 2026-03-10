@@ -1,60 +1,84 @@
-# RenderDoc-Python-Test
+﻿# RenderDoc-Python-Test
 
-一个基于 Python + RenderDoc 的自动化工具仓库，面向 **远程启动 App、截帧、以及 `.rdc` 解析（材质/Shader 维度）** 的工作流。
+基于 Python + RenderDoc 的自动化工具仓库，覆盖两类核心能力：
 
-> 当前仓库已经包含 RenderDoc Python 绑定与平台动态库（`include/`、`lib/`），开箱即可在对应平台使用。
+- 远程启动与截帧（Android / ADB）
+- `.rdc` 解析与结构化落盘（Material / Texture / Shader / Pass）
 
----
-
-## 功能概览
-
-- **远程控制截帧（Android / ADB）**
-  - 启动 RenderDoc 远程服务
-  - 启动目标 App 并注入
-  - 触发截帧并保存到本地目录
-
-- **RDC 解析（核心）**
-  - 解析单个 `.rdc` 文件
-  - 提取材质与 Shader 信息
-  - 输出结构化 JSON 报告（默认：`output/rdc_material_shader.json`）
-
-- **辅助任务**
-  - `.rdc` 文件按数值后缀自动重命名：`1.rdc / 2.rdc / ...`
-  - TCP Server 模式，支持外部进程下发指令控制截帧流程
+当前解析契约版本：`schema_version=1.5.0`。
 
 ---
 
-## 目录结构
+## 1. 项目特性
+
+- 单文件 `.rdc` 解析，默认输出到 `output/<capture_name>/`
+- `rdc_entry.json` 作为统一入口，索引四类实体
+- Texture / Shader 重资产可独立开关导出
+- 纹理 PNG 自动去重（共享目录）
+- Shader 源码自动去重（共享目录）
+- 索引项附带 `sha256`，方便平台做增量上报和校验
+
+---
+
+## 2. 目录结构
 
 ```text
 RenderDoc-Python-Test/
 ├─ src/
-│  ├─ main.py                     # 程序入口
-│  ├─ capture/remote_object.py    # RenderDoc 远程连接与截帧
-│  ├─ parse/material_shader_parser.py # rdc 解析核心
-│  ├─ task/
-│  │  ├─ cmd_task.py              # 交互式控制台任务
-│  │  ├─ parse_rdc_task.py        # rdc_parse / parse_rdc
-│  │  ├─ rename_rdc_task.py       # rename_rdc / rdc_rename
-│  │  └─ tcp_server_task.py       # server
-│  └─ common/global_config.py     # 配置加载与运行环境初始化
-├─ config.ini                     # 运行配置
-├─ include/renderdoc/             # RenderDoc Python API 包
-├─ lib/                           # 平台动态库（已接入 LFS）
-├─ bin/                           # 工具二进制（已接入 LFS）
-├─ docs/rdc_parse.md              # RDC 解析方案文档
-└─ tools/                         # 打包脚本
+│  ├─ main.py
+│  ├─ capture/
+│  │  └─ remote_object.py
+│  ├─ common/
+│  │  ├─ global_config.py
+│  │  └─ command_type.py
+│  ├─ parse/
+│  │  ├─ rdc_parse_pipeline.py
+│  │  ├─ rdc_parser.py
+│  │  └─ modules/
+│  │     ├─ material_module.py
+│  │     ├─ texture_module.py
+│  │     ├─ shader_module.py
+│  │     └─ pass_module.py
+│  └─ task/
+│     ├─ task_manager.py
+│     ├─ cmd_task.py
+│     ├─ parse_rdc_task.py
+│     ├─ rename_rdc_task.py
+│     └─ tcp_server_task.py
+├─ docs/
+│  ├─ rdc_parse.md
+│  └─ assets/
+├─ include/
+├─ lib/
+├─ save/
+├─ output/
+├─ config.ini
+└─ README.md
 ```
 
 ---
 
-## 环境要求
+## 3. 环境要求
 
-- Python 3.10
-- Git（若拉取含 LFS 文件，需安装 Git LFS）
-- ADB（如需 Android 远程截帧）
+- Python `3.10+`
+- Git（若仓库含 LFS 资源，需安装 Git LFS）
+- Android 场景需安装 `adb` 并可正常连接设备
 
-如仓库内大文件用到 LFS，请先执行：
+说明：
+
+- 仓库已包含 RenderDoc Python 绑定与对应动态库目录（`lib/`、`include/`）
+- 启动入口会自动配置 Python 运行时库路径
+
+---
+
+## 4. 安装与准备
+
+```bash
+git clone <repo_url>
+cd RenderDoc-Python-Test
+```
+
+如需拉取 LFS 资源：
 
 ```bash
 git lfs install
@@ -63,7 +87,11 @@ git lfs pull
 
 ---
 
-## 配置说明（`config.ini`）
+## 5. 配置文件
+
+配置文件路径：`config.ini`
+
+示例：
 
 ```ini
 [path]
@@ -85,95 +113,169 @@ default_task_params =
 
 关键项：
 
-- `path.save_dir_abs`：本地截帧保存目录；为空时默认 `项目根/save`
-- `Android.package_name/activity_name`：目标 App 启动入口
-- `Android.device_serial`：指定设备序列号（不填则默认首个设备）
-- `Task.default_task_id`：默认任务（无命令行参数时使用）
+- `path.save_dir_abs`：默认截帧保存目录；为空时使用 `<repo>/save`
+- `Network.listen_host / listen_port`：TCP Server 监听地址
+- `Android.package_name / activity_name`：目标 App 启动入口
+- `Android.device_serial`：指定设备序列号；为空时使用首个可用设备
+- `Task.default_task_id`：无子命令时默认任务（默认 `cmd`）
 
 ---
 
-## 快速开始
+## 6. 快速开始
 
-### 1) 交互式控制台（默认）
+命令格式：
+
+```bash
+python src/main.py <task_id> key=value key=value ...
+```
+
+### 6.1 控制台模式（默认）
 
 ```bash
 python src/main.py
 ```
 
-控制台可用命令：
+进入交互后可用命令：
 
-- `rdc`：启动 RenderDoc 远程服务
-- `app`：启动目标 App
-- `cap [name]`：截帧（可选文件名）
+- `rdc`：启动 RenderDoc remote server
+- `app`：启动目标 App 并注入
+- `cap [name]`：触发截帧
 - `exit`：退出
 
-### 2) 解析 `.rdc` 输出 JSON
+### 6.2 解析 RDC（核心）
+
+任务名：`rdc_parse`（兼容别名：`parse_rdc`）
 
 ```bash
-python src/main.py rdc_parse rdc=E:/path/to/xxx.rdc output=output/rdc_material_shader.json include_source=false
+python src/main.py rdc_parse rdc=save/1.rdc
 ```
 
-参数说明：
+可选参数：
 
-- `rdc` / `input` / `file`：输入 `.rdc` 路径
-- `output` / `out`：输出 JSON 路径
-- `include_source`：是否输出 shader 源码内容（`true/false`）
+- `rdc` / `input` / `file`：输入 `.rdc` 文件路径
+- `save_dir`：当未指定 `rdc` 时，从该目录选择最新 `.rdc`
+- `export_texture_assets=true|false`：是否导出纹理 PNG（默认 `true`）
+- `export_shader_assets=true|false`：是否导出 Shader 源码（默认 `true`）
+- `include_context_events=true|false`：预留参数（当前不进入 artifacts 模型）
 
-若不提供 `rdc`，会尝试从 `save_dir` 中选最新 `.rdc`。
-
-兼容任务名：`parse_rdc`
-
-### 3) 批量重命名 `.rdc`
+示例：
 
 ```bash
-python src/main.py rename_rdc save_dir=E:/captures
+python src/main.py rdc_parse rdc=save/1.rdc export_texture_assets=true export_shader_assets=true
+python src/main.py rdc_parse rdc=save/1.rdc export_texture_assets=false export_shader_assets=true
+python src/main.py rdc_parse save_dir=save
 ```
 
-会按文件名中的数值后缀排序后重命名为 `1.rdc, 2.rdc...`。
+### 6.3 批量重命名 RDC
 
-兼容任务名：`rdc_rename`
+任务名：`rename_rdc`（兼容别名：`rdc_rename`）
 
-### 4) TCP 服务模式
+```bash
+python src/main.py rename_rdc save_dir=save
+```
+
+会按文件名后缀数字排序并重命名为：`1.rdc, 2.rdc, ...`
+
+### 6.4 TCP Server 模式
+
+任务名：`server`
 
 ```bash
 python src/main.py server
 ```
 
-默认监听 `127.0.0.1:16688`，支持 JSON 指令（见 `src/common/command_type.py`）：
+默认监听 `127.0.0.1:16688`，指令枚举定义在 `src/common/command_type.py`：
 
-- `0` Launch_RDC
-- `1` Launch_APP
-- `2` APP_CAPTURE
-- `3` CLOSE_CONNNET
-- `4` SET_DIR
-- `5` SET_DEVICE_SERIAL
-
----
-
-## RDC 解析输出
-
-完整文档见：`docs/rdc_parse.md`
+- `0` `Launch_RDC`
+- `1` `Launch_APP`
+- `2` `APP_CAPTURE`
+- `3` `CLOSE_CONNNET`
+- `4` `SET_DIR`
+- `5` `SET_DEVICE_SERIAL`
 
 ---
 
-## 常见问题
+## 7. RDC 解析输出
 
-### 1. 提示找不到 renderdoc 模块
-- 确保通过 `python src/main.py ...` 启动，让 `common.cfg.setup_python_env()` 生效。
-- 检查 `lib/<platform>` 路径是否完整。
+输入 `xxx.rdc` 后，输出目录固定为：
 
-### 2. Android 设备未连接
-- 执行 `adb devices` 确认在线。
-- 如多设备，配置 `Android.device_serial`。
+```text
+output/xxx/
+├─ rdc_entry.json
+├─ rdc_material/
+│  └─ .../rdc_material.json
+├─ rdc_texture/
+│  ├─ _shared_images/
+│  └─ .../rdc_texture.json
+├─ rdc_shader/
+│  ├─ _shared_sources/
+│  └─ .../rdc_shader.json
+└─ rdc_pass/
+   └─ .../rdc_pass.json
+```
 
-### 3. `.rdc` 解析失败
-- 先确认文件有效且后缀为 `.rdc`。
-- 某些 capture 的调试信息可能不完整，导致源码字段为空，这是正常情况。
+说明：
+
+- `rdc_entry.json`：统一入口（`capture_file`、`summary`、`artifacts`）
+- `rdc_texture/_shared_images`：纹理 PNG 按内容哈希去重
+- `rdc_shader/_shared_sources`：Shader 源码按内容哈希去重
+- 各实体目录中 JSON 为主数据，重资产文件通过相对路径引用
+
+完整字段定义与示例请看：
+
+- [docs/rdc_parse.md](docs/rdc_parse.md)
+
+流程图：
+
+- ![RDC Parse Flow](docs/assets/rdc_parse_flow_full_v1.png)
 
 ---
 
-## 后续建议
+## 8. 扩展开发建议
 
-- 增加 `requirements.txt` 与一键启动脚本
-- 在 README 中补充 TCP 指令请求/响应示例
-- 为 `rdc_parse` 增加多版本对比命令入口（结合 `docs/rdc_parse.md` 6.x 方案）
+解析框架已按模块拆分，新增能力建议按“实体模块 + 编排层接线”实现：
+
+- `src/parse/modules/material_module.py`
+- `src/parse/modules/texture_module.py`
+- `src/parse/modules/shader_module.py`
+- `src/parse/modules/pass_module.py`
+- `src/parse/rdc_parse_pipeline.py`
+
+建议保持：
+
+- 实体模块负责 `extract_* / persist_*`
+- 编排层只负责遍历 action、关系聚合、索引写入
+
+---
+
+## 9. 常见问题
+
+### 9.1 `import renderdoc` 失败
+
+- 确认通过 `python src/main.py ...` 启动（会自动执行环境初始化）
+- 检查 `lib/<platform>` 是否完整
+
+### 9.2 找不到 `.rdc` 文件
+
+- 显式传入：`rdc=<path>`
+- 或检查 `save_dir` 与 `config.ini` 中 `path.save_dir_abs`
+
+### 9.3 纹理图片未导出
+
+- 检查是否设置了 `export_texture_assets=false`
+- 查看 `rdc_entry.json.summary.texture_export_error_count`
+- 查看对应 `rdc_texture.json` 的 `export_error`
+
+### 9.4 Material 的 `pass_channels / material_instance_names / mesh_names` 为空
+
+- 这类字段来自 marker 解析，依赖 capture 内标记质量
+- 计算/清理类 pass 往往无法稳定给出材质语义，出现空值是预期行为之一
+
+---
+
+## 10. 相关文档
+
+- 解析契约与完整字段：`docs/rdc_parse.md`
+- 解析流程图：`docs/assets/rdc_parse_flow_overview.png`
+- 任务实现入口：`src/task/`
+

@@ -2,11 +2,12 @@
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from common import cfg
-from parse.material_shader_parser import parse_capture_material_shader
+from parse.rdc_parse_pipeline import parse_capture_rdc
 
 from . import task_manager
 
@@ -41,6 +42,17 @@ def _find_latest_rdc(save_dir: Path) -> Optional[Path]:
     return files[0] if files else None
 
 
+def _reset_capture_output(capture_folder: Path) -> None:
+    for name in ("rdc_material", "rdc_texture", "rdc_shader", "rdc_pass"):
+        target = capture_folder / name
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
+
+    entry = capture_folder / "rdc_entry.json"
+    if entry.exists() and entry.is_file():
+        entry.unlink()
+
+
 @task_manager.manager.register
 class ParseRdcTask:
     """Parse one .rdc and output material/shader JSON report."""
@@ -73,10 +85,11 @@ class ParseRdcTask:
             emit_shaders = True
             source_output_dir = capture_folder / "rdc_shader" if export_shader_assets else None
             material_output_dir = capture_folder / "rdc_material"
-            material_instance_output_dir = capture_folder / "rdc_material_instance"
             texture_output_dir = capture_folder / "rdc_texture"
             shader_output_dir = capture_folder / "rdc_shader"
             pass_output_dir = capture_folder / "rdc_pass"
+
+            _reset_capture_output(capture_folder)
 
             print(f"rdc_parse start: {rdc_path}")
             print(
@@ -85,7 +98,7 @@ class ParseRdcTask:
                 f"export_texture_assets={export_texture_assets}, export_shader_assets={export_shader_assets}"
             )
 
-            payload = parse_capture_material_shader(
+            payload = parse_capture_rdc(
                 str(rdc_path),
                 include_source=export_shader_assets,
                 schema=schema,
@@ -93,7 +106,6 @@ class ParseRdcTask:
                 emit_shaders=emit_shaders,
                 source_output_dir=str(source_output_dir) if source_output_dir is not None else None,
                 material_output_dir=str(material_output_dir),
-                material_instance_output_dir=str(material_instance_output_dir),
                 texture_output_dir=str(texture_output_dir),
                 shader_output_dir=str(shader_output_dir),
                 pass_output_dir=str(pass_output_dir),
@@ -108,7 +120,6 @@ class ParseRdcTask:
             tokens = []
             for key in (
                 "material_count",
-                "material_instance_count",
                 "texture_count",
                 "shader_count",
                 "pass_count",
@@ -121,14 +132,11 @@ class ParseRdcTask:
             artifacts = payload.get("artifacts", {})
             if isinstance(artifacts, dict):
                 material_info = artifacts.get("materials", {})
-                material_instance_info = artifacts.get("material_instances", {})
                 texture_info = artifacts.get("textures", {})
                 shader_info = artifacts.get("shaders", {})
                 pass_info = artifacts.get("passes", {})
                 if isinstance(material_info, dict) and material_info.get("index"):
                     print(f"materials index: {material_info.get('index')}")
-                if isinstance(material_instance_info, dict) and material_instance_info.get("index"):
-                    print(f"material instances index: {material_instance_info.get('index')}")
                 if isinstance(texture_info, dict) and texture_info.get("index"):
                     print(f"textures index: {texture_info.get('index')}")
                 if isinstance(shader_info, dict) and shader_info.get("index"):

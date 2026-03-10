@@ -2,15 +2,15 @@
 
 from typing import Any, Dict
 
-from .material_shader_parser import MaterialShaderParser
+from .rdc_parse_pipeline import RdcParsePipeline
 
 
 class RDCParser:
-    """Compatibility wrapper around the new material/shader parser."""
+    """Compatibility wrapper around the RDC parse pipeline."""
 
     def __init__(self, filename: str):
         self.filename = filename
-        self._parser = MaterialShaderParser(filename)
+        self._parser = RdcParsePipeline(filename)
 
     def load(self) -> None:
         self._parser.load()
@@ -23,7 +23,6 @@ class RDCParser:
         emit_shaders: bool = False,
         source_output_dir: str | None = None,
         material_output_dir: str | None = None,
-        material_instance_output_dir: str | None = None,
         texture_output_dir: str | None = None,
         shader_output_dir: str | None = None,
         pass_output_dir: str | None = None,
@@ -36,7 +35,6 @@ class RDCParser:
             emit_shaders=emit_shaders,
             source_output_dir=source_output_dir,
             material_output_dir=material_output_dir,
-            material_instance_output_dir=material_instance_output_dir,
             texture_output_dir=texture_output_dir,
             shader_output_dir=shader_output_dir,
             pass_output_dir=pass_output_dir,
