@@ -19,8 +19,6 @@ class RDCParser:
         self,
         include_source: bool = False,
         schema: str = "1",
-        include_context_events: bool = False,
-        emit_shaders: bool = False,
         source_output_dir: str | None = None,
         material_output_dir: str | None = None,
         texture_output_dir: str | None = None,
@@ -31,8 +29,6 @@ class RDCParser:
         return self._parser.parse(
             include_source=include_source,
             schema=schema,
-            include_context_events=include_context_events,
-            emit_shaders=emit_shaders,
             source_output_dir=source_output_dir,
             material_output_dir=material_output_dir,
             texture_output_dir=texture_output_dir,

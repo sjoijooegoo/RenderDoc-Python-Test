@@ -12,7 +12,7 @@
 ## 1. 项目特性
 
 - 单文件 `.rdc` 解析，默认输出到 `output/<capture_name>/`
-- `rdc_entry.json` 作为统一入口，索引四类实体
+- `rdc_entry.json` 作为统一入口，索引四类实体并记录各类数量
 - Texture / Shader 重资产可独立开关导出
 - 纹理 PNG 自动去重（共享目录）
 - Shader 源码自动去重（共享目录）
@@ -154,19 +154,65 @@ python src/main.py rdc_parse rdc=save/1.rdc
 
 - `rdc` / `input` / `file`：输入 `.rdc` 文件路径
 - `save_dir`：当未指定 `rdc` 时，从该目录选择最新 `.rdc`
+- `output`：自定义输出目录名
+- `pkg`：输出打包模式
 - `export_texture_assets=true|false`：是否导出纹理 PNG（默认 `true`）
 - `export_shader_assets=true|false`：是否导出 Shader 源码（默认 `true`）
-- `include_context_events=true|false`：预留参数（当前不进入 artifacts 模型）
+
+`output` 规则：
+
+- 不填写：直接输出到 `output/`
+- `output=name`：输出到 `output/<rdc文件名>/`
+- `output=<其他名称>`：输出到 `output/<其他名称>/`
+
+`pkg` 规则：
+
+- 不填写：四类实体目录直接放在当前输出目录
+- `pkg=cos`：四类实体目录打包为 `rdc_<build_num>_<tex_quality>_<timestamp>.zip`，zip 内部根目录直接是 `rdc_material/`、`rdc_texture/`、`rdc_shader/`、`rdc_pass/`，包名写入 `rdc_entry.json` 的 `cos_params.package`
 
 示例：
 
 ```bash
 python src/main.py rdc_parse rdc=save/1.rdc export_texture_assets=true export_shader_assets=true
 python src/main.py rdc_parse rdc=save/1.rdc export_texture_assets=false export_shader_assets=true
+python src/main.py rdc_parse rdc=save/1.rdc output=name
+python src/main.py rdc_parse rdc=save/1.rdc output=my_capture
+python src/main.py rdc_parse rdc=save/1.rdc pkg=cos
 python src/main.py rdc_parse save_dir=save
 ```
 
-### 6.3 批量重命名 RDC
+### 6.3 批量解析 RDC
+
+任务名：`rdc_parse_batch`
+
+```bash
+python src/main.py rdc_parse_batch dir=save
+```
+
+可选参数：
+
+- `dir`：批量解析目录，默认使用 `save_dir`
+- `output`：默认按 `name` 处理
+- `pkg`：与 `rdc_parse` 一致
+- `export_texture_assets=true|false`
+- `export_shader_assets=true|false`
+
+`output` 规则：
+
+- 不填写：等价于 `output=name`
+- `output=name`：每个 `.rdc` 输出到 `output/<rdc文件名>/`
+- `output=<其他名称>`：每个 `.rdc` 输出到 `output/<其他名称>/<rdc文件名>/`
+
+示例：
+
+```bash
+python src/main.py rdc_parse_batch dir=save
+python src/main.py rdc_parse_batch dir=save output=name
+python src/main.py rdc_parse_batch dir=save output=my_batch
+python src/main.py rdc_parse_batch dir=save pkg=cos
+```
+
+### 6.4 批量重命名 RDC
 
 任务名：`rename_rdc`（兼容别名：`rdc_rename`）
 
@@ -176,7 +222,7 @@ python src/main.py rename_rdc save_dir=save
 
 会按文件名后缀数字排序并重命名为：`1.rdc, 2.rdc, ...`
 
-### 6.4 TCP Server 模式
+### 6.5 TCP Server 模式
 
 任务名：`server`
 
@@ -216,7 +262,7 @@ output/xxx/
 
 说明：
 
-- `rdc_entry.json`：统一入口（`capture_file`、`summary`、`artifacts`）
+- `rdc_entry.json`：统一入口（`capture_file`、`cos_params`、`artifacts`）；当 `pkg=cos` 时包名写在 `cos_params.package`
 - `rdc_texture/_shared_images`：纹理 PNG 按内容哈希去重
 - `rdc_shader/_shared_sources`：Shader 源码按内容哈希去重
 - 各实体目录中 JSON 为主数据，重资产文件通过相对路径引用
@@ -263,7 +309,6 @@ output/xxx/
 ### 9.3 纹理图片未导出
 
 - 检查是否设置了 `export_texture_assets=false`
-- 查看 `rdc_entry.json.summary.texture_export_error_count`
 - 查看对应 `rdc_texture.json` 的 `export_error`
 
 ### 9.4 Material 的 `pass_channels / material_instance_names / mesh_names` 为空

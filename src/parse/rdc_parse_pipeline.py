@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -34,7 +34,11 @@ class RdcParsePipeline:
         self.material_module = MaterialModule()
         self.pass_module = PassModule()
 
+    def _log(self, message: str) -> None:
+        print(f"[rdc_parse] {message}")
+
     def load(self) -> None:
+        load_start = time.perf_counter()
         self.cap, self.controller = load_capture(self.filename)
         self._resource_names = self._build_resource_name_map()
         self._texture_ids = TextureModule.build_texture_id_set(self.controller)
@@ -48,7 +52,13 @@ class RdcParsePipeline:
             self._texture_ids,
             self._texture_desc_map,
         )
+        self.texture_module.set_logger(self._log)
         self.pass_module.set_controller(self.controller)
+        self._log(
+            "load done: "
+            f"resources={len(self._resource_names)}, textures={len(self._texture_ids)}, "
+            f"elapsed={time.perf_counter() - load_start:.2f}s"
+        )
 
     def shutdown(self) -> None:
         if self.controller is not None:
@@ -149,8 +159,6 @@ class RdcParsePipeline:
     def _parse_revision1(
         self,
         include_source: bool = False,
-        include_context_events: bool = False,
-        emit_shaders: bool = False,
     ) -> Dict[str, Any]:
         if self.controller is None:
             raise RuntimeError("Parser is not loaded")
@@ -159,6 +167,7 @@ class RdcParsePipeline:
         shader_registry: Dict[str, Dict[str, Any]] = {}
         pass_map: Dict[str, Dict[str, Any]] = {}
         used_texture_ids: Set[str] = set()
+        parse_start = time.perf_counter()
 
         pipeline_type = "Unknown"
         try:
@@ -168,10 +177,16 @@ class RdcParsePipeline:
             pass
 
         shader_stages = self.shader_module.shader_stages()
+        all_actions = rdc_utils.list_all_actions(self.controller)
+        draw_actions = [action for action in all_actions if rdc_utils.is_draw_or_dispatch(action)]
+        self._log(
+            "scan start: "
+            f"total_actions={len(all_actions)}, draw_or_dispatch_actions={len(draw_actions)}, "
+            f"include_source={include_source}, export_texture_images={self.texture_module.export_texture_images}"
+        )
 
-        for action in rdc_utils.list_all_actions(self.controller):
-            if not rdc_utils.is_draw_or_dispatch(action):
-                continue
+        for index, action in enumerate(draw_actions, start=1):
+            action_start = time.perf_counter()
 
             self.controller.SetFrameEvent(action.eventId, True)
             state = self.controller.GetPipelineState()
@@ -270,6 +285,25 @@ class RdcParsePipeline:
             for item in shader_items:
                 ShaderModule.register_shader(shader_registry, item)
 
+            action_elapsed = time.perf_counter() - action_start
+            if action_elapsed >= 2.0:
+                self._log(
+                    "slow action: "
+                    f"index={index}/{len(draw_actions)}, event_id={action.eventId}, "
+                    f"elapsed={action_elapsed:.2f}s, marker_path={marker_path or 'root'}"
+                )
+
+            if index == 1 or index % 25 == 0 or index == len(draw_actions):
+                self._log(
+                    "scan progress: "
+                    f"{index}/{len(draw_actions)} actions, "
+                    f"materials={len(material_map)}, passes={len(pass_map)}, "
+                    f"shaders={len(shader_registry)}, used_textures={len(used_texture_ids)}, "
+                    f"elapsed={time.perf_counter() - parse_start:.2f}s"
+                )
+
+        self._log(f"scan done: elapsed={time.perf_counter() - parse_start:.2f}s")
+
         material_rows: List[Tuple[Dict[str, Any], int]] = []
         for material_entry in material_map.values():
             material_payload = {
@@ -293,19 +327,18 @@ class RdcParsePipeline:
         material_rows.sort(key=lambda item: item[1], reverse=True)
         material_pairs: List[Tuple[str, str]] = []
         material_path_map: Dict[str, str] = {}
+        material_persist_start = time.perf_counter()
+        self._log(f"persist materials start: count={len(material_rows)}")
         for material_payload, _usage in material_rows:
             material_key = str(material_payload.get("material_base_key", ""))
             material_path = self.material_module.persist_material_record(material_key, material_payload)
             if material_path:
                 material_pairs.append((material_key, material_path))
                 material_path_map[material_key] = material_path
-
-        summary: Dict[str, Any] = {
-            "material_count": len(material_map),
-            "texture_count": len(used_texture_ids),
-            "shader_count": len(shader_registry),
-            "pass_count": len(pass_map),
-        }
+        self._log(
+            f"persist materials done: count={len(material_pairs)}, "
+            f"elapsed={time.perf_counter() - material_persist_start:.2f}s"
+        )
 
         artifacts: Dict[str, Any] = {}
         if self.material_module.output_dir is not None:
@@ -316,18 +349,29 @@ class RdcParsePipeline:
                 file_name="rdc_material_index.json",
             )
             if index_path:
-                artifacts["materials"] = {"index": index_path}
+                artifacts["materials"] = {
+                    "index": index_path,
+                    "count": len(material_index_entries),
+                }
 
         if self.texture_module.output_dir is not None:
             texture_pairs: List[Tuple[str, str]] = []
             texture_export_error_count = 0
-            for texture_id in sorted(used_texture_ids):
+            texture_stage_start = time.perf_counter()
+            self._log(f"persist textures start: count={len(used_texture_ids)}")
+            for index, texture_id in enumerate(sorted(used_texture_ids), start=1):
                 texture_record = self.texture_module.ensure_texture_export(texture_id)
                 if texture_record.get("export_error"):
                     texture_export_error_count += 1
                 texture_path = self.texture_module.persist_texture_record(texture_id, texture_record)
                 if texture_path:
                     texture_pairs.append((str(texture_record.get("texture_compare_key", texture_id)), texture_path))
+                if index == 1 or index % 50 == 0 or index == len(used_texture_ids):
+                    self._log(
+                        "persist textures progress: "
+                        f"{index}/{len(used_texture_ids)}, errors={texture_export_error_count}, "
+                        f"elapsed={time.perf_counter() - texture_stage_start:.2f}s"
+                    )
 
             texture_index_entries = self._build_index_entries(texture_pairs, self.texture_module.output_base_dir)
             index_path = self._write_index_file(
@@ -336,8 +380,15 @@ class RdcParsePipeline:
                 file_name="rdc_texture_index.json",
             )
             if index_path:
-                artifacts["textures"] = {"index": index_path}
-            summary["texture_export_error_count"] = texture_export_error_count
+                artifacts["textures"] = {
+                    "index": index_path,
+                    "count": len(texture_index_entries),
+                }
+            self._log(
+                f"persist textures done: count={len(texture_pairs)}, "
+                f"errors={texture_export_error_count}, "
+                f"elapsed={time.perf_counter() - texture_stage_start:.2f}s"
+            )
 
         if self.shader_module.output_dir is not None:
             shader_rows = sorted(
@@ -346,10 +397,17 @@ class RdcParsePipeline:
                 reverse=True,
             )
             shader_pairs: List[Tuple[str, str]] = []
-            for shader_payload in shader_rows:
+            shader_stage_start = time.perf_counter()
+            self._log(f"persist shaders start: count={len(shader_rows)}")
+            for index, shader_payload in enumerate(shader_rows, start=1):
                 shader_path = self.shader_module.persist_shader_record(shader_payload)
                 if shader_path:
                     shader_pairs.append((str(shader_payload.get("shader_key", "")), shader_path))
+                if index == 1 or index % 50 == 0 or index == len(shader_rows):
+                    self._log(
+                        "persist shaders progress: "
+                        f"{index}/{len(shader_rows)}, elapsed={time.perf_counter() - shader_stage_start:.2f}s"
+                    )
 
             shader_index_entries = self._build_index_entries(shader_pairs, self.shader_module.output_base_dir)
             index_path = self._write_index_file(
@@ -358,12 +416,21 @@ class RdcParsePipeline:
                 file_name="rdc_shader_index.json",
             )
             if index_path:
-                artifacts["shaders"] = {"index": index_path}
+                artifacts["shaders"] = {
+                    "index": index_path,
+                    "count": len(shader_index_entries),
+                }
+            self._log(
+                f"persist shaders done: count={len(shader_pairs)}, "
+                f"elapsed={time.perf_counter() - shader_stage_start:.2f}s"
+            )
 
         if self.pass_module.output_dir is not None:
             pass_rows = sorted(pass_map.values(), key=lambda x: x.get("usage_count", 0), reverse=True)
             pass_pairs: List[Tuple[str, str]] = []
-            for pass_entry in pass_rows:
+            pass_stage_start = time.perf_counter()
+            self._log(f"persist passes start: count={len(pass_rows)}")
+            for index, pass_entry in enumerate(pass_rows, start=1):
                 pass_key = str(pass_entry.get("pass_key", ""))
                 material_paths = [
                     material_path_map[mat_key]
@@ -383,6 +450,11 @@ class RdcParsePipeline:
                 pass_path = self.pass_module.persist_pass_record(pass_payload)
                 if pass_path:
                     pass_pairs.append((pass_key, pass_path))
+                if index == 1 or index % 50 == 0 or index == len(pass_rows):
+                    self._log(
+                        "persist passes progress: "
+                        f"{index}/{len(pass_rows)}, elapsed={time.perf_counter() - pass_stage_start:.2f}s"
+                    )
 
             pass_index_entries = self._build_index_entries(pass_pairs, self.pass_module.output_base_dir)
             index_path = self._write_index_file(
@@ -391,15 +463,21 @@ class RdcParsePipeline:
                 file_name="rdc_pass_index.json",
             )
             if index_path:
-                artifacts["passes"] = {"index": index_path}
+                artifacts["passes"] = {
+                    "index": index_path,
+                    "count": len(pass_index_entries),
+                }
+            self._log(
+                f"persist passes done: count={len(pass_pairs)}, "
+                f"elapsed={time.perf_counter() - pass_stage_start:.2f}s"
+            )
+
+        self._log(f"parse done: total_elapsed={time.perf_counter() - parse_start:.2f}s")
 
         return {
             "schema_version": SCHEMA_VERSION,
-            "parser_version": PARSER_VERSION,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
             "capture_file": Path(self.filename).name,
             "capture_id": self._capture_id(),
-            "summary": summary,
             "artifacts": artifacts,
         }
 
@@ -515,8 +593,6 @@ class RdcParsePipeline:
         self,
         include_source: bool = False,
         schema: str = "1",
-        include_context_events: bool = False,
-        emit_shaders: bool = False,
         source_output_dir: Optional[str] = None,
         material_output_dir: Optional[str] = None,
         texture_output_dir: Optional[str] = None,
@@ -543,8 +619,6 @@ class RdcParsePipeline:
         if normalized in {"1", "v1", "rev1", "first"}:
             return self._parse_revision1(
                 include_source=include_source,
-                include_context_events=include_context_events,
-                emit_shaders=emit_shaders,
             )
 
         return self._parse_legacy(include_source=include_source)
@@ -554,8 +628,6 @@ def parse_capture_rdc(
     filename: str,
     include_source: bool = False,
     schema: str = "1",
-    include_context_events: bool = False,
-    emit_shaders: bool = False,
     source_output_dir: Optional[str] = None,
     material_output_dir: Optional[str] = None,
     texture_output_dir: Optional[str] = None,
@@ -567,8 +639,6 @@ def parse_capture_rdc(
         return parser.parse(
             include_source=include_source,
             schema=schema,
-            include_context_events=include_context_events,
-            emit_shaders=emit_shaders,
             source_output_dir=source_output_dir,
             material_output_dir=material_output_dir,
             texture_output_dir=texture_output_dir,

@@ -9,6 +9,7 @@
 - Material / Texture / Shader / Pass 四类实体落盘
 - 重资产（纹理图片、shader源码）按参数开关导出
 - 索引可校验（`id/path/sha256`）
+- 支持批量任务 `rdc_parse_batch`
 
 ---
 
@@ -16,11 +17,17 @@
 
 ### 1.1 输出路径
 
-输入 `xxx.rdc` 时输出固定：
+默认不传 `output` 时输出固定：
 
-- `output/xxx/rdc_entry.json`
+- `output/rdc_entry.json`
 
-其中 `xxx` 为 `.rdc` 文件名（去后缀）并做安全化处理。
+若传入 `output=name`，则输出为：
+
+- `output/<rdc文件名>/rdc_entry.json`
+
+若传入 `output=<其他名称>`，则输出为：
+
+- `output/<其他名称>/rdc_entry.json`
 
 ### 1.2 固定 schema
 
@@ -28,7 +35,7 @@
 
 ### 1.3 固定目录名
 
-`output/xxx/` 下固定目录：
+输出目录下固定目录：
 
 - `rdc_material/`
 - `rdc_texture/`
@@ -39,7 +46,18 @@
 
 ## 2. 运行参数
 
+单文件任务：`rdc_parse`  
+批量任务：`rdc_parse_batch`
+
 - `rdc` / `input` / `file`：输入 capture 路径
+- `dir`：批量解析目录；仅 `rdc_parse_batch` 使用，默认 `save_dir`
+- `output`
+  - 不填写：输出目录为 `output/`
+  - `output=name`：输出目录为 `output/<rdc文件名>/`
+  - `output=<其他名称>`：输出目录为 `output/<其他名称>/`
+- `pkg`
+  - 不填写：`rdc_material/`、`rdc_texture/`、`rdc_shader/`、`rdc_pass/` 直接放在当前输出目录
+  - `pkg=cos`：四类实体目录打包为 `rdc_<build_num>_<tex_quality>_<end_time_str>.zip`，zip 内部不再额外包一层同名目录
 - `export_texture_assets=true/false`（默认 `true`）
   - 控制纹理图片 `image.png` 是否导出
 - `export_shader_assets=true/false`（默认 `true`）
@@ -48,7 +66,8 @@
 说明：
 
 - shader JSON 始终导出（仅源码文件受参数控制）。
-- `include_context_events` 当前不进入 artifacts 输出模型。
+- `rdc_parse_batch` 默认按 `output=name` 处理。
+- `rdc_parse_batch` 若传 `output=<其他名称>`，实际输出为 `output/<其他名称>/<rdc文件名>/`，避免多个 capture 相互覆盖。
 
 ---
 
@@ -59,29 +78,31 @@
 ```json
 {
   "schema_version": "1.5.0",
-  "parser_version": "rdc_parse_v1.5.0",
-  "generated_at": "2026-03-09T12:34:56.123456+00:00",
   "capture_file": "1.rdc",
   "capture_id": "cap:...",
-  "summary": {
-    "material_count": 296,
-    "texture_count": 405,
-    "shader_count": 233,
-    "pass_count": 362,
-    "texture_export_error_count": 12
+  "cos_params": {
+    "build_num": "-1",
+    "platform_type": "-1",
+    "tex_quality": "-1",
+    "override_device": "-1",
+    "package": "rdc_1234_1_20260316113045.zip"
   },
   "artifacts": {
     "materials": {
-      "index": "rdc_material/rdc_material_index.json"
+      "index": "rdc_material/rdc_material_index.json",
+      "count": 296
     },
     "textures": {
-      "index": "rdc_texture/rdc_texture_index.json"
+      "index": "rdc_texture/rdc_texture_index.json",
+      "count": 405
     },
     "shaders": {
-      "index": "rdc_shader/rdc_shader_index.json"
+      "index": "rdc_shader/rdc_shader_index.json",
+      "count": 233
     },
     "passes": {
-      "index": "rdc_pass/rdc_pass_index.json"
+      "index": "rdc_pass/rdc_pass_index.json",
+      "count": 362
     }
   }
 }
@@ -90,12 +111,10 @@
 字段说明：
 
 - `schema_version`：数据契约版本
-- `parser_version`：解析器实现版本
-- `generated_at`：UTC 生成时间
 - `capture_file`：仅文件名（不含绝对路径）
 - `capture_id`：由文件元信息生成的 capture 指纹
-- `summary`：快速统计
-- `artifacts`：四类集合入口
+- `cos_params`：当前运行环境参数，由 `CosParams` 类统一构建；当 `pkg=cos` 时会额外包含 `package`
+- `artifacts`：四类集合入口与数量统计
 
 ---
 
@@ -105,7 +124,8 @@
 
 ```json
 {
-  "index": "<relative_index_path>"
+  "index": "<relative_index_path>",
+  "count": 123
 }
 ```
 
@@ -275,7 +295,6 @@
 ## 8. 已知限制
 
 - 部分纹理无法回读，Texture JSON 会出现 `export_error`。
-- `include_context_events` 目前不在 artifacts 输出中体现。
 - 当前 Material 为关系扁平模型，不包含深层 variant/context 结构。
 
 ---

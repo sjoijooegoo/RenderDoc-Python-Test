@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import renderdoc as rd
 
@@ -23,6 +24,7 @@ class TextureModule:
         self._image_hash_map: Dict[str, Path] = {}
         self.export_map: Dict[str, Dict[str, Any]] = {}
         self.export_texture_images: bool = True
+        self.log_fn: Optional[Callable[[str], None]] = None
 
     def set_capture_context(
         self,
@@ -38,6 +40,13 @@ class TextureModule:
 
     def set_export_texture_images(self, enabled: bool) -> None:
         self.export_texture_images = bool(enabled)
+
+    def set_logger(self, log_fn: Optional[Callable[[str], None]]) -> None:
+        self.log_fn = log_fn
+
+    def _log(self, message: str) -> None:
+        if self.log_fn is not None:
+            self.log_fn(message)
 
     def configure_output_dir(self, texture_output_dir: Optional[str]) -> None:
         self.output_dir = None
@@ -161,6 +170,8 @@ class TextureModule:
             except Exception:
                 pass
 
+        export_start = time.perf_counter()
+
         try:
             save_data = rd.TextureSave()
             save_data.resourceId = tex_desc.resourceId
@@ -235,6 +246,13 @@ class TextureModule:
             record["texture_compare_key"] = self._compute_texture_compare_key(texture_id, record)
 
         self.export_map[texture_id] = record
+        export_elapsed = time.perf_counter() - export_start
+        if export_elapsed >= 1.0:
+            self._log(
+                "texture export slow: "
+                f"resource_id={texture_id}, elapsed={export_elapsed:.2f}s, "
+                f"has_image={'image_path' in record}, has_error={'export_error' in record}"
+            )
         return record
 
     def persist_texture_record(self, texture_id: str, record: Optional[Dict[str, Any]] = None) -> Optional[str]:
