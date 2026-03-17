@@ -2,6 +2,10 @@
 
 import hashlib
 import json
+import os
+import platform
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -37,6 +41,138 @@ class RdcParsePipeline:
     def _log(self, message: str) -> None:
         print(f"[rdc_parse] {message}")
 
+    def _run_text_command(self, command: List[str], timeout: int = 10) -> str:
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                check=False,
+            )
+        except Exception:
+            return ""
+
+        output = (completed.stdout or "").strip()
+        if output:
+            return output
+        return (completed.stderr or "").strip()
+
+    def _system_gpu_lines(self) -> List[str]:
+        if os.name == "nt":
+            output = self._run_text_command(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_VideoController | "
+                    "Select-Object Name,DriverVersion,Status | ConvertTo-Json -Compress",
+                ],
+                timeout=15,
+            )
+            if output:
+                try:
+                    raw = json.loads(output)
+                    items = raw if isinstance(raw, list) else [raw]
+                    lines: List[str] = []
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        name = str(item.get("Name", "") or "")
+                        driver = str(item.get("DriverVersion", "") or "")
+                        status = str(item.get("Status", "") or "")
+                        token = ", ".join(
+                            part
+                            for part in [
+                                name,
+                                f"driver={driver}" if driver else "",
+                                f"status={status}" if status else "",
+                            ]
+                            if part
+                        )
+                        if token:
+                            lines.append(token)
+                    if lines:
+                        return lines
+                except Exception:
+                    pass
+
+        if sys.platform.startswith("linux"):
+            output = self._run_text_command(["sh", "-lc", "lspci | grep -iE 'vga|3d|display'"], timeout=10)
+            if output:
+                return [line.strip() for line in output.splitlines() if line.strip()]
+
+        return []
+
+    def _api_properties_snapshot(self) -> Dict[str, Any]:
+        if self.controller is None:
+            return {}
+
+        try:
+            props = self.controller.GetAPIProperties()
+        except Exception:
+            return {}
+
+        snapshot: Dict[str, Any] = {}
+        for name in (
+            "pipelineType",
+            "vendor",
+            "localRenderer",
+            "remoteReplay",
+            "degraded",
+            "shaderDebugging",
+            "pixelHistory",
+            "rgpCapture",
+        ):
+            value = getattr(props, name, None)
+            if value is None:
+                continue
+            enum_name = utils.enum_name(value)
+            if enum_name:
+                snapshot[name] = enum_name
+                continue
+            try:
+                value = value.Name()
+            except Exception:
+                pass
+            snapshot[name] = value
+        return snapshot
+
+    def _log_environment_diagnostics(self) -> None:
+        capture_path = Path(self.filename)
+        try:
+            capture_size = capture_path.stat().st_size
+        except Exception:
+            capture_size = 0
+
+        env_info = {
+            "host": platform.node(),
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "session": os.environ.get("SESSIONNAME", ""),
+            "user": os.environ.get("USERNAME", "") or os.environ.get("USER", ""),
+            "ci": os.environ.get("CI", ""),
+            "computer": os.environ.get("COMPUTERNAME", ""),
+            "capture_file": capture_path.name,
+            "capture_size": capture_size,
+        }
+        self._log("env diagnostics: " + json.dumps(env_info, ensure_ascii=False))
+
+        gpu_lines = self._system_gpu_lines()
+        if gpu_lines:
+            for index, line in enumerate(gpu_lines, start=1):
+                self._log(f"gpu[{index}]: {line}")
+        else:
+            self._log("gpu: unavailable")
+
+        api_info = self._api_properties_snapshot()
+        if api_info:
+            self._log("replay diagnostics: " + json.dumps(api_info, ensure_ascii=False, default=str))
+        else:
+            self._log("replay diagnostics: unavailable")
+
     def load(self) -> None:
         load_start = time.perf_counter()
         self.cap, self.controller = load_capture(self.filename)
@@ -54,6 +190,7 @@ class RdcParsePipeline:
         )
         self.texture_module.set_logger(self._log)
         self.pass_module.set_controller(self.controller)
+        self._log_environment_diagnostics()
         self._log(
             "load done: "
             f"resources={len(self._resource_names)}, textures={len(self._texture_ids)}, "
