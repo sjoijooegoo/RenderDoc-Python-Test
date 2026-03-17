@@ -12,3 +12,7 @@ from .tcp_server_task import TCPServerTask
 from .parse_rdc_task import ParseRdcTask
 
 from .rename_rdc_task import RenameRdcTask
+
+from .download_rdc import DownloadRdcTask
+
+from .clear_output_task import ClearOutputTask

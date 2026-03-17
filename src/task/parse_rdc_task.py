@@ -1,8 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import concurrent.futures
 import json
 import re
 import shutil
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from typing import List, Optional
@@ -31,10 +34,28 @@ def _to_bool(value: Optional[str], default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _to_int(value: Optional[str], default: int = 1) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        return default
+    return parsed if parsed > 0 else default
+
+
 def _safe_name(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
     safe = safe.strip("._")
     return safe or "capture"
+
+
+def _safe_output_path(value: str) -> Optional[str]:
+    raw_parts = re.split(r"[\\/]+", str(value).strip())
+    parts = [_safe_name(part) for part in raw_parts if str(part).strip()]
+    if not parts:
+        return None
+    return Path(*parts).as_posix()
 
 
 def _find_latest_rdc(save_dir: Path) -> Optional[Path]:
@@ -65,6 +86,10 @@ def _reset_capture_output(capture_folder: Path) -> None:
 
 
 def _resolve_output_folder_name(rdc_path: Path, params) -> Optional[str]:
+    output_path_arg = params.get("output_path")
+    if output_path_arg is not None and str(output_path_arg).strip():
+        return _safe_output_path(str(output_path_arg))
+
     output_arg = params.get("output") or params.get("ouput")
     if output_arg is None or not str(output_arg).strip():
         return None
@@ -129,6 +154,36 @@ def _create_artifact_zip(artifact_root: Path, artifact_package_path: Path) -> No
                 continue
             arcname = file_path.relative_to(artifact_root).as_posix()
             zip_file.write(file_path, arcname=arcname)
+
+
+def _build_child_command(task_id: str, params) -> List[str]:
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, task_id]
+    else:
+        repo_root = Path(__file__).resolve().parents[2]
+        command = [sys.executable, str(repo_root / "src" / "main.py"), task_id]
+
+    for key, value in params.items():
+        command.append(f"{key}={value}")
+    return command
+
+
+def _run_single_rdc_subprocess(rdc_path: Path, params, output_folder_name: str) -> dict:
+    child_params = {}
+    for key, value in params.items():
+        if key in {"dir", "workers", "output", "ouput", "rdc", "input", "file", "path"}:
+            continue
+        child_params[key] = value
+
+    child_params["rdc"] = str(rdc_path)
+    child_params["output_path"] = output_folder_name
+
+    completed = subprocess.run(_build_child_command("rdc_parse", child_params), check=False)
+    return {
+        "rdc_name": rdc_path.name,
+        "returncode": int(completed.returncode),
+        "output_folder_name": output_folder_name,
+    }
 
 
 def _log_payload_summary(payload: dict, artifact_package_path: Optional[Path]) -> None:
@@ -271,11 +326,49 @@ class ParseRdcBatchTask:
                 params = dict(params)
                 params["output"] = "name"
 
-            print(f"rdc_parse_batch start: dir={dir_path}, count={len(rdc_files)}")
-            for index, rdc_path in enumerate(rdc_files, start=1):
-                print(f"rdc_parse_batch progress: {index}/{len(rdc_files)} -> {rdc_path.name}")
-                output_folder_name = _resolve_batch_output_folder_name(rdc_path, params)
-                _parse_single_rdc(rdc_path, params, output_folder_name)
-            print(f"rdc_parse_batch done: count={len(rdc_files)}")
+            workers = _to_int(params.get("workers"), default=1)
+            if workers <= 1:
+                print(f"rdc_parse_batch start: dir={dir_path}, count={len(rdc_files)}, workers=1")
+                for index, rdc_path in enumerate(rdc_files, start=1):
+                    print(f"rdc_parse_batch progress: {index}/{len(rdc_files)} -> {rdc_path.name}")
+                    output_folder_name = _resolve_batch_output_folder_name(rdc_path, params)
+                    _parse_single_rdc(rdc_path, params, output_folder_name)
+                print(f"rdc_parse_batch done: count={len(rdc_files)}, workers=1")
+                return
+
+            print(f"rdc_parse_batch start: dir={dir_path}, count={len(rdc_files)}, workers={workers}")
+            future_map = {}
+            completed_count = 0
+            failed_results = []
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                for rdc_path in rdc_files:
+                    output_folder_name = _resolve_batch_output_folder_name(rdc_path, params)
+                    print(f"rdc_parse_batch submit: {rdc_path.name} -> output/{output_folder_name}")
+                    future = executor.submit(_run_single_rdc_subprocess, rdc_path, dict(params), output_folder_name)
+                    future_map[future] = rdc_path.name
+
+                for future in concurrent.futures.as_completed(future_map):
+                    result = future.result()
+                    completed_count += 1
+                    rdc_name = result.get("rdc_name", future_map[future])
+                    returncode = int(result.get("returncode", 1))
+                    if returncode == 0:
+                        print(f"rdc_parse_batch progress: {completed_count}/{len(rdc_files)} done -> {rdc_name}")
+                    else:
+                        failed_results.append(result)
+                        print(
+                            "rdc_parse_batch progress: "
+                            f"{completed_count}/{len(rdc_files)} failed -> {rdc_name}, returncode={returncode}"
+                        )
+
+            if failed_results:
+                failed_names = ", ".join(str(item.get("rdc_name", "")) for item in failed_results)
+                print(
+                    f"rdc_parse_batch done: count={len(rdc_files)}, workers={workers}, "
+                    f"failed={len(failed_results)} [{failed_names}]"
+                )
+            else:
+                print(f"rdc_parse_batch done: count={len(rdc_files)}, workers={workers}")
         except Exception as exc:
             print(f"rdc_parse_batch_task error: {exc}")
