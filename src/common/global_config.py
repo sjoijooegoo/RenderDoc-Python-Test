@@ -61,11 +61,17 @@ class GlobalConfig:
             sys.path.append(self.renderdoc_lib_path)
         if sys.platform == 'linux':
             ctypes.CDLL(os.path.join(self.renderdoc_lib_path, "libxcb-keysyms.so.1"))
-        elif sys.platform == 'Win32' and hasattr(os, 'add_dll_directory'):
+        elif sys.platform == 'win32' and hasattr(os, 'add_dll_directory'):
             os.add_dll_directory(self.current_dir)
             os.add_dll_directory(self.renderdoc_lib_path)
         else:
-            os.environ["PATH"] = self.renderdoc_lib_path + self.current_dir + os.pathsep + os.environ["PATH"]
+            os.environ["PATH"] = (
+                self.renderdoc_lib_path
+                + os.pathsep
+                + self.current_dir
+                + os.pathsep
+                + os.environ["PATH"]
+            )
 
 
 
