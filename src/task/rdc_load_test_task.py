@@ -40,6 +40,7 @@ class RdcLoadTestTask:
     def execute(self, args, params):
         cap = None
         controller = None
+        print(f"[rdc_load_test] start: params={params}")
         try:
             save_dir = _resolve_path(params.get("save_dir", cfg.save_dir))
             rdc_arg = params.get("rdc") or params.get("input") or params.get("file") or params.get("path")
