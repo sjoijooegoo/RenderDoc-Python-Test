@@ -220,7 +220,7 @@ def _log_payload_summary(payload: dict, artifact_package_path: Optional[Path]) -
 def _parse_single_rdc(rdc_path: Path, params, output_folder_name: Optional[str]) -> Path:
     output_root = _resolve_path("output")
     capture_folder = output_root if output_folder_name is None else output_root / output_folder_name
-    cos_params = CosParams()
+    cos_params = CosParams(str(rdc_path))
     artifact_root = _resolve_artifact_root(capture_folder, params, cos_params)
     artifact_package_path = _resolve_artifact_package_path(capture_folder, artifact_root, params)
     output_path = capture_folder / "rdc_entry.json"

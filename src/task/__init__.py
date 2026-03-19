@@ -16,5 +16,3 @@ from .rename_rdc_task import RenameRdcTask
 from .download_rdc import DownloadRdcTask
 
 from .clear_output_task import ClearOutputTask
-
-from .rdc_load_test_task import RdcLoadTestTask
