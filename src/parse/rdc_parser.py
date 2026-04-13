@@ -24,7 +24,7 @@ class RDCParser:
         texture_output_dir: str | None = None,
         shader_output_dir: str | None = None,
         pass_output_dir: str | None = None,
-        export_texture_images: bool = True,
+        export_texture_images: bool = False,
     ) -> Dict[str, Any]:
         return self._parser.parse(
             include_source=include_source,

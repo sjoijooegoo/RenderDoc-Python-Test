@@ -46,8 +46,8 @@ class ShaderModule:
         source_dir = Path(source_output_dir).resolve()
         source_dir.mkdir(parents=True, exist_ok=True)
         self.source_output_dir = source_dir
-        self.source_output_base_dir = source_dir.parent
-        shared_source_dir = source_dir / "_shared_sources"
+        self.source_output_base_dir = source_dir
+        shared_source_dir = source_dir / "shader_sources"
         shared_source_dir.mkdir(parents=True, exist_ok=True)
         self.shared_source_dir = shared_source_dir
 
@@ -207,7 +207,6 @@ class ShaderModule:
                 "source_file_count": len(source_files),
                 "source_line_count": sum(int(x.get("_line_count", 0)) for x in source_files),
                 "source_md5": source_md5,
-                "constant_layout_tokens": self._collect_constant_layout_tokens(shader, stage_name),
             }
             info["shader_key"] = utils.make_shader_key(info)
             if include_source:

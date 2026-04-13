@@ -33,6 +33,10 @@ class MaterialModule:
             return None
         return self.output_dir / safe_file_part(material_base_key.replace(":", "_"))
 
+    @staticmethod
+    def normalize_token(value: str) -> str:
+        return str(value or "").strip().lower()
+
     def persist_material_record(self, material_base_key: str, material_payload: Dict[str, Any]) -> Optional[str]:
         if self.output_dir is None:
             return None
@@ -89,3 +93,93 @@ class MaterialModule:
     @staticmethod
     def build_variant_key(shader_keys: List[str]) -> str:
         return utils.make_signature(shader_keys, "var")
+
+    @staticmethod
+    def build_material_instance_key(material_instance_name: str) -> str:
+        name = str(material_instance_name or "").strip().lower()
+        if not name:
+            return "mat:none"
+        return utils.make_signature([f"mi:{name}"], "mat")
+
+    @staticmethod
+    def build_material_stable_key(
+        shader_keys: List[str],
+        material_instance_name: str,
+        mesh_name: str,
+        pass_channel: str,
+    ) -> str:
+        tokens: List[str] = []
+        for shader_key in sorted(set(shader_keys)):
+            text = str(shader_key or "").strip()
+            if text:
+                tokens.append(f"shader:{text}")
+
+        mi_text = str(material_instance_name or "").strip()
+        mesh_text = str(mesh_name or "").strip()
+        pass_text = str(pass_channel or "").strip()
+        if mi_text:
+            tokens.append(f"mi:{mi_text.lower()}")
+        if mesh_text:
+            tokens.append(f"mesh:{mesh_text.lower()}")
+        if pass_text:
+            tokens.append(f"pass:{pass_text.lower()}")
+
+        return utils.make_signature(tokens, "mat")
+
+    @staticmethod
+    def build_usage_key(
+        material_instance_name: str,
+        mesh_name: str,
+        pass_channel: str,
+        stage_shader_map: Dict[str, str],
+    ) -> str:
+        tokens: List[str] = [
+            f"mi:{str(material_instance_name or '').strip().lower() or 'none'}",
+            f"mesh:{str(mesh_name or '').strip().lower() or 'none'}",
+            f"pass:{str(pass_channel or '').strip().lower() or 'none'}",
+        ]
+        for stage in sorted(stage_shader_map):
+            shader_key = str(stage_shader_map.get(stage, "") or "").strip()
+            if shader_key:
+                tokens.append(f"{stage}:{shader_key}")
+        return utils.make_signature(tokens, "usage")
+
+    @staticmethod
+    def build_shader_set_key(stage_shader_map: Dict[str, str]) -> str:
+        tokens = []
+        for stage in sorted(stage_shader_map):
+            shader_key = str(stage_shader_map.get(stage, "") or "").strip()
+            if shader_key:
+                tokens.append(f"{stage}:{shader_key}")
+        return utils.make_signature(tokens, "shset")
+
+    @staticmethod
+    def build_content_signature(
+        mesh_names: List[str],
+        pass_channels: List[str],
+        shader_sets: List[Dict[str, str]],
+    ) -> str:
+        tokens: List[str] = []
+        for mesh_name in sorted(set(str(x or "").strip().lower() for x in mesh_names if str(x or "").strip())):
+            tokens.append(f"mesh:{mesh_name}")
+        for pass_channel in sorted(
+            set(str(x or "").strip().lower() for x in pass_channels if str(x or "").strip())
+        ):
+            tokens.append(f"pass:{pass_channel}")
+
+        shader_set_tokens: List[str] = []
+        for shader_set in shader_sets:
+            if not isinstance(shader_set, dict):
+                continue
+            stage_tokens = []
+            for stage in sorted(shader_set):
+                shader_key = str(shader_set.get(stage, "") or "").strip()
+                if shader_key:
+                    stage_tokens.append(f"{stage}:{shader_key}")
+            if stage_tokens:
+                shader_set_tokens.append(";".join(stage_tokens))
+
+        for shader_set_token in sorted(set(shader_set_tokens)):
+            tokens.append(f"shader_set:{shader_set_token}")
+
+        return utils.make_signature(tokens, "sig")

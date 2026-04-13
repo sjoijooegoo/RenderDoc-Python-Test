@@ -39,6 +39,45 @@ def _clean_directory(directory: Path) -> None:
             child.unlink()
 
 
+def _flatten_extracted_rdc_files(output_dir: Path) -> int:
+    rdc_files = sorted([path for path in output_dir.rglob("*.rdc") if path.is_file()])
+    if not rdc_files:
+        raise FileNotFoundError(f"no .rdc file found after extract: {output_dir}")
+
+    moved_count = 0
+    for src in rdc_files:
+        if src.parent == output_dir:
+            continue
+
+        target = output_dir / src.name
+        if target.exists():
+            stem = target.stem
+            suffix = target.suffix
+            index = 1
+            while True:
+                candidate = output_dir / f"{stem}_{index}{suffix}"
+                if not candidate.exists():
+                    target = candidate
+                    break
+                index += 1
+
+        src.replace(target)
+        moved_count += 1
+
+    # Remove extracted wrapper folders and any non-rdc payload files.
+    for path in sorted(output_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if path.is_dir():
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+            continue
+        if path.suffix.lower() != ".rdc":
+            path.unlink(missing_ok=True)
+
+    return moved_count
+
+
 def _normalize_udt_test_id(udt_url: str) -> str:
     value = str(udt_url).strip()
     if not value:
@@ -100,6 +139,9 @@ def _download_rdc_resources(
         zip_ref.extractall(output_dir)
 
     zip_path.unlink(missing_ok=True)
+    moved_count = _flatten_extracted_rdc_files(output_dir)
+    root_rdc_count = len(list(output_dir.glob("*.rdc")))
+    print(f"download_rdc flatten done: moved={moved_count}, root_rdc={root_rdc_count}")
     print(f"download_rdc done: {output_dir}")
     return output_dir
 

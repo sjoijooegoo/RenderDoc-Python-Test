@@ -32,6 +32,7 @@ class RdcParsePipeline:
         self._resource_names: Dict[str, str] = {}
         self._texture_ids: Set[str] = set()
         self._texture_desc_map: Dict[str, Any] = {}
+        self._texture_catalog_ready = False
 
         self.shader_module = ShaderModule()
         self.texture_module = TextureModule()
@@ -177,8 +178,9 @@ class RdcParsePipeline:
         load_start = time.perf_counter()
         self.cap, self.controller = load_capture(self.filename)
         self._resource_names = self._build_resource_name_map()
-        self._texture_ids = TextureModule.build_texture_id_set(self.controller)
-        self._texture_desc_map = TextureModule.build_texture_desc_map(self.controller)
+        self._texture_ids = set()
+        self._texture_desc_map = {}
+        self._texture_catalog_ready = False
 
         self.shader_module.set_resource_names(self._resource_names)
         self.material_module.set_resource_names(self._resource_names)
@@ -195,6 +197,22 @@ class RdcParsePipeline:
             "load done: "
             f"resources={len(self._resource_names)}, textures={len(self._texture_ids)}, "
             f"elapsed={time.perf_counter() - load_start:.2f}s"
+        )
+
+    def _ensure_texture_catalog(self) -> None:
+        if self._texture_catalog_ready:
+            return
+        if self.controller is None:
+            return
+
+        self._texture_ids = TextureModule.build_texture_id_set(self.controller)
+        self._texture_desc_map = TextureModule.build_texture_desc_map(self.controller)
+        self._texture_catalog_ready = True
+        self.texture_module.set_capture_context(
+            self.controller,
+            self._resource_names,
+            self._texture_ids,
+            self._texture_desc_map,
         )
 
     def shutdown(self) -> None:
@@ -269,6 +287,30 @@ class RdcParsePipeline:
         target.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
         return target.relative_to(dir_path.parent).as_posix()
 
+    def _write_json_file(self, dir_path: Optional[Path], payload: Any, file_name: str) -> Optional[str]:
+        if dir_path is None:
+            return None
+        target = dir_path / file_name
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return target.relative_to(dir_path.parent).as_posix()
+
+    @staticmethod
+    def _build_stage_shader_map(shader_items: List[Dict[str, Any]]) -> Dict[str, str]:
+        stage_to_keys: Dict[str, Set[str]] = {}
+        for shader_item in shader_items:
+            stage = str(shader_item.get("stage", "") or "").strip()
+            shader_key = str(shader_item.get("shader_key", "") or "").strip()
+            if not stage or not shader_key:
+                continue
+            stage_to_keys.setdefault(stage, set()).add(shader_key)
+
+        stage_shader_map: Dict[str, str] = {}
+        for stage in sorted(stage_to_keys):
+            shader_keys = sorted(stage_to_keys[stage])
+            if shader_keys:
+                stage_shader_map[stage] = shader_keys[0]
+        return stage_shader_map
+
     def _extract_sampler_ids(self, state: rd.PipeState, shader_stages: List[rd.ShaderStage]) -> List[str]:
         sampler_ids: Set[str] = set()
         for stage in shader_stages:
@@ -293,6 +335,108 @@ class RdcParsePipeline:
 
         return sorted(sampler_ids)
 
+    def _select_final_frame_output(self, draw_actions: List[rd.ActionDescription]) -> Optional[Tuple[rd.ActionDescription, Any]]:
+        for action in reversed(draw_actions):
+            output_ids = getattr(action, "outputs", None) or ()
+            for rid in output_ids:
+                rid_text = utils.normalize_resource_id(rid)
+                if rid_text and rid_text in self._texture_ids:
+                    return action, rid
+        return None
+
+    def _export_capture_thumbnail_png(self, image_path: Path, max_size: int = 2048) -> bool:
+        if self.cap is None:
+            return False
+        try:
+            thumb = self.cap.GetThumbnail(rd.FileType.PNG, int(max_size))
+        except Exception:
+            return False
+
+        data = bytes(getattr(thumb, "data", b"") or b"")
+        if not data:
+            return False
+
+        image_path.write_bytes(data)
+        width = int(getattr(thumb, "width", 0) or 0)
+        height = int(getattr(thumb, "height", 0) or 0)
+        self._log(f"final frame exported from thumbnail: {width}x{height}, path={image_path.name}")
+        return True
+
+    def _export_final_frame_png(self, draw_actions: List[rd.ActionDescription]) -> Optional[str]:
+        if (
+            self.controller is None
+            or self.material_module.output_dir is None
+            or self.material_module.output_base_dir is None
+        ):
+            return None
+
+        image_path = self.material_module.output_base_dir / "preview.png"
+        if image_path.exists() and image_path.is_file():
+            image_path.unlink()
+
+        # Prefer embedded capture thumbnail. It's faster and stable across replay state.
+        if self._export_capture_thumbnail_png(image_path):
+            rel_path = image_path.relative_to(self.material_module.output_base_dir).as_posix()
+            return rel_path
+
+        self._ensure_texture_catalog()
+        selected = self._select_final_frame_output(draw_actions)
+        if selected is None:
+            self._log("final frame export skipped: no thumbnail and no color output resource found")
+            return None
+
+        action, resource_id = selected
+        rid_text = utils.normalize_resource_id(resource_id)
+        if not rid_text:
+            self._log("final frame export skipped: invalid output resource id")
+            return None
+
+        try:
+            self.controller.SetFrameEvent(action.eventId, True)
+            save_data = rd.TextureSave()
+            save_data.resourceId = resource_id
+            save_data.destType = rd.FileType.PNG
+            save_data.mip = 0
+
+            sample = rd.TextureSampleMapping()
+            sample.mapToArray = False
+            sample.sampleIndex = rd.TextureSampleMapping.ResolveSamples
+            save_data.sample = sample
+
+            slice_mapping = rd.TextureSliceMapping()
+            slice_mapping.sliceIndex = 0
+            slice_mapping.slicesAsGrid = False
+            slice_mapping.cubeCruciform = False
+            slice_mapping.sliceGridWidth = 0
+            save_data.slice = slice_mapping
+
+            result = self.controller.SaveTexture(save_data, str(image_path))
+            ok = bool(result)
+            try:
+                ok = bool(result.OK())
+            except Exception:
+                pass
+
+            if not ok:
+                msg = ""
+                try:
+                    msg = result.Message() or ""
+                except Exception:
+                    pass
+                if image_path.exists():
+                    image_path.unlink(missing_ok=True)
+                self._log(f"final frame export failed: event_id={action.eventId}, resource_id={rid_text}, error={msg}")
+                return None
+        except Exception as exc:
+            if image_path.exists():
+                image_path.unlink(missing_ok=True)
+            self._log(f"final frame export failed: event_id={action.eventId}, resource_id={rid_text}, error={exc}")
+            return None
+
+        rel_path = image_path.relative_to(self.material_module.output_base_dir).as_posix()
+        self._log(f"final frame exported: event_id={action.eventId}, resource_id={rid_text}, path={rel_path}")
+        return rel_path
+
     def _parse_revision1(
         self,
         include_source: bool = False,
@@ -302,6 +446,7 @@ class RdcParsePipeline:
 
         material_map: Dict[str, Dict[str, Any]] = {}
         shader_registry: Dict[str, Dict[str, Any]] = {}
+        shader_key_set: Set[str] = set()
         pass_map: Dict[str, Dict[str, Any]] = {}
         used_texture_ids: Set[str] = set()
         parse_start = time.perf_counter()
@@ -313,13 +458,16 @@ class RdcParsePipeline:
         except Exception:
             pass
 
-        shader_stages = self.shader_module.shader_stages()
+        collect_textures = self.texture_module.output_dir is not None
+        shader_stages = self.shader_module.shader_stages() if collect_textures else []
         all_actions = rdc_utils.list_all_actions(self.controller)
         draw_actions = [action for action in all_actions if rdc_utils.is_draw_or_dispatch(action)]
         self._log(
             "scan start: "
             f"total_actions={len(all_actions)}, draw_or_dispatch_actions={len(draw_actions)}, "
-            f"include_source={include_source}, export_texture_images={self.texture_module.export_texture_images}"
+            f"include_source={include_source}, "
+            f"collect_textures={collect_textures}, "
+            f"export_texture_images={self.texture_module.export_texture_images}"
         )
 
         for index, action in enumerate(draw_actions, start=1):
@@ -330,97 +478,97 @@ class RdcParsePipeline:
 
             shader_items = self.shader_module.extract_shaders(state, include_source=include_source)
             shader_keys = sorted(set(item["shader_key"] for item in shader_items))
+            shader_key_set.update(shader_keys)
+            stage_shader_map = self._build_stage_shader_map(shader_items)
 
-            texture_ids = self.texture_module.extract_texture_ids(state, shader_stages)
-            used_texture_ids.update(texture_ids)
-            sampler_ids = self._extract_sampler_ids(state, shader_stages)
-            used_resource_ids = self.texture_module.extract_used_resource_ids(state, shader_stages)
-            constant_layout_tokens = ShaderModule.extract_constant_layout_tokens_from_shaders(shader_items)
-
-            base_features = self.material_module.build_base_features(
-                texture_ids,
-                sampler_ids,
-                constant_layout_tokens,
-                self.texture_module.texture_compare_key,
-            )
-            material_base_key = self.material_module.build_material_base_key(base_features)
+            texture_ids: List[str] = []
+            if collect_textures:
+                texture_ids = self.texture_module.extract_texture_ids(state, shader_stages)
+                used_texture_ids.update(texture_ids)
 
             pass_features = self.pass_module.extract_pass_features(action, state, pipeline_type)
             pass_key = str(pass_features.get("pass_key", ""))
             marker_context = PassModule.extract_marker_context(pass_features.get("marker_path", ""))
-            pass_channel = marker_context.get("pass_channel", "")
+            pass_channel = str(pass_features.get("pass_channel", "") or marker_context.get("pass_channel", ""))
             material_instance_name = marker_context.get("material_instance_name", "")
             mesh_name = marker_context.get("mesh_name", "")
             marker_path = str(pass_features.get("marker_path", "") or "")
-
-            # Keep these keys for future expansion (currently not exported).
-            mesh_key = self.pass_module.build_mesh_key(action, state)
-            lighting_key = self.pass_module.build_lighting_key(
-                used_resource_ids, constant_layout_tokens, self._resource_names
-            )
-            _ = utils.make_signature([pass_key, mesh_key, lighting_key], "ctx")
+            if material_instance_name:
+                material_base_key = self.material_module.build_material_instance_key(material_instance_name)
+            else:
+                material_base_key = self.material_module.build_material_stable_key(
+                    shader_keys=shader_keys,
+                    material_instance_name=material_instance_name,
+                    mesh_name=mesh_name,
+                    pass_channel=pass_channel,
+                )
+            shader_set_key = self.material_module.build_shader_set_key(stage_shader_map)
 
             material_entry = material_map.get(material_base_key)
             if material_entry is None:
                 material_entry = {
                     "material_base_key": material_base_key,
-                    "base_features": base_features,
-                    "_texture_id_set": set(),
-                    "_shader_key_set": set(),
+                    "_shader_detail_map": {},
+                    "_shader_set_map": {},
                     "_pass_channel_set": set(),
                     "_material_instance_name_set": set(),
                     "_mesh_name_set": set(),
-                    "_sample_marker_path_set": set(),
                     "_usage_count": 0,
                 }
                 material_map[material_base_key] = material_entry
 
             material_entry["_usage_count"] += 1
-            material_entry["_texture_id_set"].update(texture_ids)
-            material_entry["_shader_key_set"].update(shader_keys)
             if pass_channel:
                 material_entry["_pass_channel_set"].add(pass_channel)
             if material_instance_name:
                 material_entry["_material_instance_name_set"].add(material_instance_name)
             if mesh_name:
                 material_entry["_mesh_name_set"].add(mesh_name)
-            if marker_path and marker_path != "root":
-                marker_set = material_entry["_sample_marker_path_set"]
-                if len(marker_set) < 20:
-                    marker_set.add(marker_path)
+            if shader_set_key and shader_set_key not in material_entry["_shader_set_map"]:
+                material_entry["_shader_set_map"][shader_set_key] = dict(stage_shader_map)
+
+            shader_detail_map = material_entry.get("_shader_detail_map", {})
+            for shader_item in shader_items:
+                shader_key = str(shader_item.get("shader_key", "") or "")
+                if not shader_key:
+                    continue
+
+                shader_detail = shader_detail_map.get(shader_key)
+                if shader_detail is None:
+                    shader_detail = {
+                        "shader_key": shader_key,
+                        "stage": str(shader_item.get("stage", "") or ""),
+                        "_source_path_set": set(),
+                    }
+                    shader_detail_map[shader_key] = shader_detail
+
+                for source_file in shader_item.get("source_files", []) or []:
+                    if not isinstance(source_file, dict):
+                        continue
+                    source_path = str(source_file.get("source_path", "") or "")
+                    if source_path:
+                        shader_detail["_source_path_set"].add(source_path)
 
             pass_entry = pass_map.get(pass_key)
             if pass_entry is None:
                 pass_entry = {
                     "pass_key": pass_key,
-                    "pass_features": {
-                        "pipeline_type": pass_features.get("pipeline_type", "Unknown"),
-                        "marker_path": pass_features.get("marker_path", "root"),
-                        "pass_channel": pass_channel,
-                        "output_resource_ids": pass_features.get("output_resource_ids", []),
-                        "depth_output_resource_id": pass_features.get("depth_output_resource_id", ""),
-                        "pipeline_object": pass_features.get("pipeline_object", ""),
-                    },
-                    "usage_count": 0,
+                    "pipeline_type": str(pass_features.get("pipeline_type", "Unknown") or "Unknown"),
+                    "marker_path": str(pass_features.get("marker_path", "root") or "root"),
+                    "pass_channel": pass_channel,
                     "_material_key_set": set(),
-                    "_material_instance_name_set": set(),
-                    "_mesh_name_set": set(),
                 }
                 pass_map[pass_key] = pass_entry
 
-            pass_entry["usage_count"] += 1
             pass_entry["_material_key_set"].add(material_base_key)
-            if material_instance_name:
-                pass_entry["_material_instance_name_set"].add(material_instance_name)
-            if mesh_name:
-                pass_entry["_mesh_name_set"].add(mesh_name)
 
-            if self.texture_module.output_dir is not None:
+            if collect_textures:
                 for texture_id in texture_ids:
                     self.texture_module.ensure_texture_export(texture_id)
 
-            for item in shader_items:
-                ShaderModule.register_shader(shader_registry, item)
+            if self.shader_module.output_dir is not None:
+                for item in shader_items:
+                    ShaderModule.register_shader(shader_registry, item)
 
             action_elapsed = time.perf_counter() - action_start
             if action_elapsed >= 2.0:
@@ -435,39 +583,70 @@ class RdcParsePipeline:
                     "scan progress: "
                     f"{index}/{len(draw_actions)} actions, "
                     f"materials={len(material_map)}, passes={len(pass_map)}, "
-                    f"shaders={len(shader_registry)}, used_textures={len(used_texture_ids)}, "
+                    f"shaders={len(shader_key_set)}, used_textures={len(used_texture_ids)}, "
                     f"elapsed={time.perf_counter() - parse_start:.2f}s"
                 )
 
         self._log(f"scan done: elapsed={time.perf_counter() - parse_start:.2f}s")
+        final_frame_image = self._export_final_frame_png(draw_actions)
 
-        material_rows: List[Tuple[Dict[str, Any], int]] = []
+        material_rows: List[Tuple[str, Dict[str, Any], int]] = []
+        material_summary_rows: List[Dict[str, Any]] = []
         for material_entry in material_map.values():
-            material_payload = {
-                "material_base_key": material_entry["material_base_key"],
-                "usage_count": int(material_entry.get("_usage_count", 0) or 0),
-                "material_instance_names": sorted(material_entry.get("_material_instance_name_set", set())),
-                "pass_channels": sorted(material_entry.get("_pass_channel_set", set())),
-                "mesh_names": sorted(material_entry.get("_mesh_name_set", set())),
-                "sample_marker_paths": sorted(material_entry.get("_sample_marker_path_set", set())),
-                "texture_json_paths": [
-                    self.texture_module.texture_json_path(texture_id) or texture_id
-                    for texture_id in sorted(material_entry["_texture_id_set"])
-                ],
-                "shader_json_paths": [
-                    self.shader_module.shader_json_path(shader_key) or shader_key
-                    for shader_key in sorted(material_entry["_shader_key_set"])
-                ],
-            }
-            material_rows.append((material_payload, material_entry["_usage_count"]))
+            material_key = str(material_entry.get("material_base_key", "") or "")
+            shader_rows: List[Dict[str, Any]] = []
+            for shader_detail in material_entry.get("_shader_detail_map", {}).values():
+                row = {
+                    "shader_key": str(shader_detail.get("shader_key", "") or ""),
+                    "stage": str(shader_detail.get("stage", "") or ""),
+                    "source_paths": sorted(shader_detail.get("_source_path_set", set())),
+                }
+                shader_rows.append(row)
+            shader_rows.sort(key=lambda item: (item.get("stage", ""), item.get("shader_key", "")))
 
-        material_rows.sort(key=lambda item: item[1], reverse=True)
+            shader_sets = sorted(
+                [dict(item) for item in material_entry.get("_shader_set_map", {}).values()],
+                key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True),
+            )
+            material_instance_names = sorted(material_entry.get("_material_instance_name_set", set()))
+            mesh_names = sorted(material_entry.get("_mesh_name_set", set()))
+            pass_channels = sorted(material_entry.get("_pass_channel_set", set()))
+            material_instance_name = material_instance_names[0] if material_instance_names else ""
+            content_signature = self.material_module.build_content_signature(
+                mesh_names=mesh_names,
+                pass_channels=pass_channels,
+                shader_sets=shader_sets,
+            )
+
+            material_payload = {
+                "material_key": material_key,
+                "material_instance_name": material_instance_name,
+                "material_instance_names": material_instance_names,
+                "mesh_names": mesh_names,
+                "pass_channels": pass_channels,
+                "shader_sets": shader_sets,
+                "content_signature": content_signature,
+                "shaders": shader_rows,
+            }
+            material_rows.append((material_key, material_payload, int(material_entry.get("_usage_count", 0) or 0)))
+            material_summary_rows.append(
+                {
+                    "material_key": material_key,
+                    "material_instance_name": material_instance_name,
+                    "mesh_names": mesh_names,
+                    "pass_channels": pass_channels,
+                    "shader_sets": shader_sets,
+                    "content_signature": content_signature,
+                }
+            )
+
+        material_rows.sort(key=lambda item: item[2], reverse=True)
+        material_summary_rows.sort(key=lambda item: item.get("material_key", ""))
         material_pairs: List[Tuple[str, str]] = []
         material_path_map: Dict[str, str] = {}
         material_persist_start = time.perf_counter()
         self._log(f"persist materials start: count={len(material_rows)}")
-        for material_payload, _usage in material_rows:
-            material_key = str(material_payload.get("material_base_key", ""))
+        for material_key, material_payload, _usage in material_rows:
             material_path = self.material_module.persist_material_record(material_key, material_payload)
             if material_path:
                 material_pairs.append((material_key, material_path))
@@ -485,11 +664,18 @@ class RdcParsePipeline:
                 material_index_entries,
                 file_name="rdc_material_index.json",
             )
+            summary_path = self._write_json_file(
+                self.material_module.output_dir,
+                material_summary_rows,
+                file_name="frame_material_summaries.json",
+            )
             if index_path:
                 artifacts["materials"] = {
                     "index": index_path,
                     "count": len(material_index_entries),
                 }
+                if summary_path:
+                    artifacts["materials"]["summaries"] = summary_path
 
         if self.texture_module.output_dir is not None:
             texture_pairs: List[Tuple[str, str]] = []
@@ -563,26 +749,27 @@ class RdcParsePipeline:
             )
 
         if self.pass_module.output_dir is not None:
-            pass_rows = sorted(pass_map.values(), key=lambda x: x.get("usage_count", 0), reverse=True)
+            pass_rows = sorted(
+                pass_map.values(),
+                key=lambda x: (len(x.get("_material_key_set", set())), x.get("pass_key", "")),
+                reverse=True,
+            )
             pass_pairs: List[Tuple[str, str]] = []
             pass_stage_start = time.perf_counter()
             self._log(f"persist passes start: count={len(pass_rows)}")
             for index, pass_entry in enumerate(pass_rows, start=1):
                 pass_key = str(pass_entry.get("pass_key", ""))
-                material_paths = [
-                    material_path_map[mat_key]
-                    for mat_key in sorted(pass_entry.get("_material_key_set", set()))
-                    if mat_key in material_path_map
-                ]
+                material_paths = []
+                for mat_key in sorted(pass_entry.get("_material_key_set", set())):
+                    material_path = material_path_map.get(mat_key)
+                    if material_path:
+                        material_paths.append({"material_path": material_path})
                 pass_payload = {
                     "pass_key": pass_key,
-                    "pass_features": pass_entry.get("pass_features", {}),
-                    "usage_count": int(pass_entry.get("usage_count", 0) or 0),
-                    "material_json_paths": material_paths,
-                    "material_instance_names": sorted(
-                        pass_entry.get("_material_instance_name_set", set())
-                    ),
-                    "mesh_names": sorted(pass_entry.get("_mesh_name_set", set())),
+                    "pipeline_type": str(pass_entry.get("pipeline_type", "Unknown") or "Unknown"),
+                    "marker_path": str(pass_entry.get("marker_path", "root") or "root"),
+                    "pass_channel": str(pass_entry.get("pass_channel", "") or ""),
+                    "material": material_paths,
                 }
                 pass_path = self.pass_module.persist_pass_record(pass_payload)
                 if pass_path:
@@ -608,6 +795,9 @@ class RdcParsePipeline:
                 f"persist passes done: count={len(pass_pairs)}, "
                 f"elapsed={time.perf_counter() - pass_stage_start:.2f}s"
             )
+
+        if final_frame_image is not None:
+            artifacts["preview_image"] = final_frame_image
 
         self._log(f"parse done: total_elapsed={time.perf_counter() - parse_start:.2f}s")
 
@@ -735,18 +925,22 @@ class RdcParsePipeline:
         texture_output_dir: Optional[str] = None,
         shader_output_dir: Optional[str] = None,
         pass_output_dir: Optional[str] = None,
-        export_texture_images: bool = True,
+        export_texture_images: bool = False,
     ) -> Dict[str, Any]:
         normalized = str(schema or "1").strip().lower()
         self.texture_module.set_export_texture_images(bool(export_texture_images))
+        wants_texture_output = bool(texture_output_dir)
 
         if normalized in {"1", "v1", "rev1", "first"}:
+            if wants_texture_output:
+                self._ensure_texture_catalog()
             self.shader_module.configure_shader_output_dir(shader_output_dir)
-            self.shader_module.configure_source_output_dir(shader_output_dir if include_source else None)
+            self.shader_module.configure_source_output_dir(source_output_dir if include_source else None)
             self.material_module.configure_output_dir(material_output_dir)
             self.texture_module.configure_output_dir(texture_output_dir)
             self.pass_module.configure_output_dir(pass_output_dir)
         else:
+            self._ensure_texture_catalog()
             self.shader_module.configure_shader_output_dir(None)
             self.shader_module.configure_source_output_dir(source_output_dir if include_source else None)
             self.material_module.configure_output_dir(None)
@@ -770,7 +964,7 @@ def parse_capture_rdc(
     texture_output_dir: Optional[str] = None,
     shader_output_dir: Optional[str] = None,
     pass_output_dir: Optional[str] = None,
-    export_texture_images: bool = True,
+    export_texture_images: bool = False,
 ) -> Dict[str, Any]:
     with RdcParsePipeline(filename) as parser:
         return parser.parse(

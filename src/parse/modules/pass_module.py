@@ -54,40 +54,20 @@ class PassModule:
         marker_path = ""
         if self.controller is not None:
             marker_path = rdc_utils.get_marker_path(action, self.controller)
-
-        output_ids = [
-            utils.normalize_resource_id(rid)
-            for rid in (getattr(action, "outputs", None) or ())
-        ]
-        output_ids = [rid for rid in output_ids if rid]
-
-        depth_out = utils.normalize_resource_id(getattr(action, "depthOut", None))
-
-        pipeline_object = ""
-        try:
-            pipeline_object = utils.normalize_resource_id(state.GetGraphicsPipelineObject())
-        except Exception:
-            pipeline_object = ""
-        if not pipeline_object:
-            try:
-                pipeline_object = utils.normalize_resource_id(state.GetComputePipelineObject())
-            except Exception:
-                pipeline_object = ""
+        marker_path = marker_path or "root"
+        marker_context = self.extract_marker_context(marker_path)
+        pass_channel = marker_context.get("pass_channel", "")
 
         pass_tokens = [
             f"api:{pipeline_type or 'Unknown'}",
-            f"marker:{marker_path or 'root'}",
-            f"outputs:{','.join(sorted(output_ids)) or 'none'}",
-            f"depth:{depth_out or 'none'}",
-            f"pipeline:{pipeline_object or 'none'}",
+            f"channel:{pass_channel or 'none'}",
+            f"marker:{marker_path}",
         ]
 
         return {
             "pipeline_type": pipeline_type or "Unknown",
-            "marker_path": marker_path or "root",
-            "output_resource_ids": sorted(output_ids),
-            "depth_output_resource_id": depth_out or "",
-            "pipeline_object": pipeline_object or "",
+            "marker_path": marker_path,
+            "pass_channel": pass_channel,
             "pass_key": utils.make_signature(pass_tokens, "pass"),
         }
 

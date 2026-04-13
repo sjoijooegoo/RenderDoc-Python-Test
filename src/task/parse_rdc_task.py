@@ -75,7 +75,7 @@ def _list_rdc_files(dir_path: Path) -> List[Path]:
 
 
 def _reset_capture_output(capture_folder: Path) -> None:
-    for name in ("rdc_material", "rdc_texture", "rdc_shader", "rdc_pass"):
+    for name in ("rdc_material", "rdc_texture", "rdc_shader", "rdc_pass", "_shared_sources", "shader_sources"):
         target = capture_folder / name
         if target.exists() and target.is_dir():
             shutil.rmtree(target)
@@ -227,11 +227,10 @@ def _parse_single_rdc(rdc_path: Path, params, output_folder_name: Optional[str])
 
     schema = "1"
     export_texture_assets = _to_bool(params.get("export_texture_assets"), default=False)
-    export_shader_assets = _to_bool(params.get("export_shader_assets"), default=True)
-    source_output_dir = artifact_root / "rdc_shader" if export_shader_assets else None
     material_output_dir = artifact_root / "rdc_material"
-    texture_output_dir = artifact_root / "rdc_texture"
-    shader_output_dir = artifact_root / "rdc_shader"
+    source_output_dir = artifact_root
+    texture_output_dir = artifact_root / "rdc_texture" if export_texture_assets else None
+    shader_output_dir = None
     pass_output_dir = artifact_root / "rdc_pass"
 
     _reset_packaged_output(capture_folder, artifact_root, artifact_package_path)
@@ -240,17 +239,17 @@ def _parse_single_rdc(rdc_path: Path, params, output_folder_name: Optional[str])
     print(
         "rdc_parse options: "
         f"export_texture_assets={export_texture_assets}, "
-        f"export_shader_assets={export_shader_assets}, pkg={params.get('pkg', '') or '(none)'}"
+        f"pkg={params.get('pkg', '') or '(none)'}"
     )
 
     payload = parse_capture_rdc(
         str(rdc_path),
-        include_source=export_shader_assets,
+        include_source=True,
         schema=schema,
         source_output_dir=str(source_output_dir) if source_output_dir is not None else None,
         material_output_dir=str(material_output_dir),
-        texture_output_dir=str(texture_output_dir),
-        shader_output_dir=str(shader_output_dir),
+        texture_output_dir=str(texture_output_dir) if texture_output_dir is not None else None,
+        shader_output_dir=str(shader_output_dir) if shader_output_dir is not None else None,
         pass_output_dir=str(pass_output_dir),
         export_texture_images=export_texture_assets,
     )
@@ -263,6 +262,9 @@ def _parse_single_rdc(rdc_path: Path, params, output_folder_name: Optional[str])
     payload.pop("artifact_package", None)
     payload.pop("env_params", None)
     payload.pop("cos_params", None)
+    artifacts = payload.get("artifacts", {})
+    if isinstance(artifacts, dict):
+        artifacts.pop("shaders", None)
     payload["cos_params"] = cos_params_payload
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

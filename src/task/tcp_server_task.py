@@ -27,6 +27,7 @@ def init_server_socket():
         print(f"无法启动 Socket 服务: {e}")
         sys.exit(1)
 
+
 def send_response(conn, command:int, success: bool, msg: str = ""):
     payload = {
         "command": command,
