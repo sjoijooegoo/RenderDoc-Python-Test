@@ -3,13 +3,12 @@ author: v_sycisong
 LastEditors: v_sycisong
 '''
 import os
-from datetime import datetime
 import json
+import traceback
 from . import task_manager
 from common import CaptureFrameCommandType,cfg
 from capture import RemoteObject
 import socket
-import json
 import sys
 
 
@@ -34,7 +33,30 @@ def send_response(conn, command:int, success: bool, msg: str = ""):
         "success": success,
         "msg": msg
     }
+    print(f"[tcp] response: {payload}")
     conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+
+
+def send_exception_response(conn, command: int, action_name: str, error: Exception):
+    stack = traceback.format_exc()
+    print(f"[tcp] {action_name} failed: {error}")
+    print(stack)
+    send_response(conn, command, False, f"{action_name} failed: {error}\n{stack}")
+
+
+def run_command(conn, command: int, action_name: str, action):
+    print(f"[tcp] {action_name} start")
+    try:
+        result = action()
+        if result is False:
+            raise RuntimeError(f"{action_name} returned False")
+    except Exception as e:
+        send_exception_response(conn, command, action_name, e)
+        return False
+
+    print(f"[tcp] {action_name} done")
+    send_response(conn, command, True)
+    return True
     
     
 @task_manager.manager.register
@@ -50,55 +72,56 @@ class TCPServerTask:
                 conn, addr = listen_sock.accept()
 
                 with conn:
+                    command = -1
                     try:
+                        print(f"[tcp] accepted connection from {addr}")
                         data = conn.recv(1024).decode('utf-8')
                         if not data: continue
+                        print(f"[tcp] raw request: {data!r}")
                         try:
                             command_json = json.loads(data)
                             command = int(command_json.get("command"))
-                            print(f"收到指令: {command}")
+                            print(f"收到指令: {command}, payload: {command_json}")
                         except json.JSONDecodeError:
                             print(f"JSON 解析失败: {data}")
+                            send_response(conn, command, False, f"JSON parse failed: {data}")
+                            continue
+                        except Exception as e:
+                            send_exception_response(conn, command, "parse command", e)
                             continue
 
                         if command == CaptureFrameCommandType.Launch_RDC:
-                            try:
-                                remote_object.launch_renderdoc()
-                            except Exception as e:
-                                print(f"启动renderdoc出错: {e}")
-                                send_response(conn, command, False, str(e))
-                            send_response(conn, command, True)
+                            run_command(conn, command, "launch RenderDoc", remote_object.launch_renderdoc)
 
                         elif command == CaptureFrameCommandType.Launch_APP:
-                            try:
-                                remote_object.launch_capture_app()
-                            except Exception as e:
-                                print(f"启动app出错: {e}")
-                                send_response(conn, command, False, str(e))
-                            send_response(conn, command, True)
+                            run_command(conn, command, "launch app", remote_object.launch_capture_app)
 
                         elif command == CaptureFrameCommandType.APP_CAPTURE:
-                            try:
-                                remote_object.capture()
-                            except Exception as e:
-                                print(f"截帧出错: {e}")
-                                send_response(conn, command, False, str(e))
-                            send_response(conn,command, True)
+                            run_command(conn, command, "capture app frame", lambda: remote_object.capture(save_dir=cfg.save_dir))
 
                         elif command == CaptureFrameCommandType.SET_DIR:
                             new_path = command_json.get("new_path")
-                            try:
+                            def set_dir():
+                                if not new_path:
+                                    raise ValueError("new_path is required")
                                 os.makedirs(new_path, exist_ok=True)
                                 cfg.save_dir = new_path
-                            except Exception as e:
-                                print(f"设置新路径出错: {e}")
-                                send_response(conn, command, False,str(e))
-                            send_response(conn, command, True)
+                                print(f"[tcp] save_dir updated: {cfg.save_dir}")
+
+                            run_command(conn, command, "set save dir", set_dir)
 
                         elif command == CaptureFrameCommandType.SET_DEVICE_SERIAL:
                             device_serial = command_json.get("device_serial")
-                            print(f"设置使用的设备序列号:{device_serial}")
-                            send_response(conn, command, True)
+                            def set_device_serial():
+                                if not device_serial:
+                                    raise ValueError("device_serial is required")
+                                cfg.device_serial = device_serial
+                                remote_object.device_serial = device_serial
+                                remote_object.remote_server = None
+                                remote_object.app_target = None
+                                print(f"[tcp] device serial updated: {device_serial}")
+
+                            run_command(conn, command, "set device serial", set_device_serial)
 
                         elif command == CaptureFrameCommandType.CLOSE_CONNNET:
                             print("收到停止服务指令，正在退出...")
@@ -109,8 +132,7 @@ class TCPServerTask:
                             send_response(conn, command,False, "Unknown command.")
 
                     except Exception as e:
-                        send_response(conn, command,False, str(e))
-                        print(f"处理数据出错: {e}")
+                        send_exception_response(conn, command, "handle request", e)
 
         except KeyboardInterrupt:
             print("停止服务")

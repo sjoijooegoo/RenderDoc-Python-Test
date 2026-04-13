@@ -40,47 +40,149 @@ class RemoteObject:
         self.app_kill_event = None
         self.app_ping_thread = None
 
-    def launch_renderdoc(self):
-        protocol = rd.GetDeviceProtocolController(self.protocol_to_use)
-        devices = protocol.GetDevices()
+    @staticmethod
+    def _format_result(result):
+        if result is None:
+            return "None"
+        try:
+            return result.Message()
+        except Exception:
+            return str(result)
 
-        if self.device_serial in devices:
-            self.device = devices[self.device_serial]
-            print(f"Using device: {self.device_serial}")
+    @staticmethod
+    def _result_ok(result):
+        if result is None:
+            return False
+        try:
+            return result.OK()
+        except Exception:
+            return bool(result)
+
+    @staticmethod
+    def _format_execute_result(exec_result):
+        if exec_result is None:
+            return "None"
+
+        try:
+            ident = exec_result.ident
+        except Exception as e:
+            ident = f"<failed to read ident: {e}>"
+
+        try:
+            result = RemoteObject._format_result(exec_result.result)
+        except Exception as e:
+            result = f"<failed to read result: {e}>"
+
+        return f"ident={ident}, result={result}"
+
+    def _debug_state(self, prefix):
+        print(
+            f"[remote] {prefix}: "
+            f"protocol={self.protocol_to_use}, "
+            f"device_serial={self.device_serial}, "
+            f"device={self.device}, "
+            f"url={self.url}, "
+            f"exe_path={self.exe_path}, "
+            f"working_dir={self.working_dir!r}, "
+            f"cmd_line={self.cmd_line!r}, "
+            f"env_count={len(self.env)}"
+        )
+
+    def launch_renderdoc(self):
+        self._debug_state("launch_renderdoc begin")
+        protocol = rd.GetDeviceProtocolController(self.protocol_to_use)
+        if protocol is None:
+            raise RuntimeError(f"device protocol is not available: {self.protocol_to_use}")
+
+        devices = list(protocol.GetDevices())
+        print(f"[remote] available {self.protocol_to_use} devices: {devices}")
+
+        if self.device_serial and self.device_serial in devices:
+            self.device = self.device_serial
+            print(f"Using device: {self.device}")
         else:
             print(f"Device {self.device_serial} not found, using default device")
             if len(devices) == 0:
                 raise RuntimeError(f"no {self.protocol_to_use} devices connected")
             self.device = devices[0]
 
-        self.device_name = protocol.GetFriendlyName(self.device)
+        self.device_name = protocol.GetFriendlyName(f"{protocol.GetProtocolName()}://{self.device}")
         print(f"Running on {self.device} - named {self.device_name}")
 
         self.url = protocol.GetProtocolName() + "://" + self.device
-        rd.CheckRemoteServerConnection(self.url)
+        self.remote_server = None
+        check_result = rd.CheckRemoteServerConnection(self.url)
+        print(f"[remote] CheckRemoteServerConnection({self.url}): {self._format_result(check_result)}")
+        start_result = None
 
-        result, self.remote_server = rd.CreateRemoteServerConnection(self.url)
-        if result == rd.ResultCode.NetworkIOFailed:
-            protocol.StartRemoteServer(self.url)
-            sleep(5)
+        if not check_result.OK():
+            start_result = protocol.StartRemoteServer(self.url)
+            print(f"StartRemoteServer: {self._format_result(start_result)}")
+
+        result = None
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            print(f"[remote] CreateRemoteServerConnection attempt {attempt + 1}/{max_attempts}: {self.url}")
             result, self.remote_server = rd.CreateRemoteServerConnection(self.url)
+            print(
+                "[remote] CreateRemoteServerConnection result: "
+                f"{self._format_result(result)}, remote_server={self.remote_server}"
+            )
+            if self.remote_server is not None and result.OK():
+                break
+            sleep_seconds = 1.5 if attempt < max_attempts - 1 else 0
+            if sleep_seconds > 0:
+                sleep(sleep_seconds)
 
         if self.remote_server is None:
-            raise RuntimeError(f"Failed to connect remote server: {result}")
+            raise RuntimeError(
+                "Failed to connect remote server: "
+                f"url={self.url}, "
+                f"check={self._format_result(check_result)}, "
+                f"start={self._format_result(start_result)}, "
+                f"connect={self._format_result(result)}"
+            )
+        self._debug_state("launch_renderdoc done")
 
     def launch_capture_app(self):
+        self._debug_state("launch_capture_app begin")
         if self.remote_server is None:
             self.launch_renderdoc()
             if self.remote_server is None:
                 return False
 
-        exec_result = self.remote_server.ExecuteAndInject(
-            self.exe_path,
-            self.working_dir,
-            self.cmd_line,
-            self.env,
-            self.opts,
+        print(
+            "[remote] ExecuteAndInject args: "
+            f"app={self.exe_path}, working_dir={self.working_dir!r}, "
+            f"cmd_line={self.cmd_line!r}, env={self.env}"
         )
+        try:
+            exec_result = self.remote_server.ExecuteAndInject(
+                self.exe_path,
+                self.working_dir,
+                self.cmd_line,
+                self.env,
+                self.opts,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                "ExecuteAndInject raised an exception: "
+                f"app={self.exe_path}, "
+                f"working_dir={self.working_dir!r}, "
+                f"cmd_line={self.cmd_line!r}, "
+                f"env={self.env}, "
+                f"url={self.url}, "
+                f"device={self.device}"
+            ) from e
+
+        print(f"[remote] ExecuteAndInject result: {self._format_execute_result(exec_result)}")
+
+        if exec_result is None:
+            raise RuntimeError("ExecuteAndInject returned None")
+
+        exec_details = exec_result.result
+        if not self._result_ok(exec_details) or exec_result.ident == 0:
+            raise RuntimeError(f"ExecuteAndInject failed: {self._format_execute_result(exec_result)}")
 
         self.app_kill_event = threading.Event()
         self.app_ping_thread = threading.Thread(
@@ -90,19 +192,39 @@ class RemoteObject:
         )
         self.app_ping_thread.start()
 
-        self.app_target = rd.CreateTargetControl(self.url, exec_result.ident, self.client_name, True)
+        print(
+            "[remote] CreateTargetControl args: "
+            f"url={self.url}, ident={exec_result.ident}, client_name={self.client_name}"
+        )
+        try:
+            self.app_target = rd.CreateTargetControl(self.url, exec_result.ident, self.client_name, True)
+        except Exception as e:
+            self.app_kill_event.set()
+            self.app_ping_thread.join(timeout=5)
+            raise RuntimeError(
+                "CreateTargetControl raised an exception: "
+                f"url={self.url}, ident={exec_result.ident}, client_name={self.client_name}"
+            ) from e
+
         if self.app_target is None:
             self.app_kill_event.set()
-            self.app_ping_thread.join()
+            self.app_ping_thread.join(timeout=5)
             self.remote_server.ShutdownServerAndConnection()
-            raise RuntimeError("Failed to launch remote app")
+            raise RuntimeError(f"Failed to create target control: {self._format_execute_result(exec_result)}")
 
+        self._debug_state("launch_capture_app done")
         return True
 
     def capture(self, frame_count=1, file_name="", save_dir=""):
+        print(
+            "[remote] capture begin: "
+            f"frame_count={frame_count}, file_name={file_name!r}, save_dir={save_dir!r}"
+        )
         if self.remote_server is None:
-            print("Remote server not started")
-            return False
+            raise RuntimeError("Remote server not started")
+
+        if self.app_target is None:
+            raise RuntimeError("Target control is not connected. Launch the app before capturing.")
 
         self.app_target.TriggerCapture(frame_count)
         print("Capture started")
@@ -112,15 +234,15 @@ class RemoteObject:
         while msg is None or msg.type != rd.TargetControlMessageType.NewCapture:
             msg = self.app_target.ReceiveMessage(None)
             if time.perf_counter() - start_time > 30:
-                print("Timeout waiting for capture callback")
-                return False
+                raise TimeoutError("Timeout waiting for capture callback")
 
         cap_path = msg.newCapture.path
         print(f"Remote capture path: {cap_path}")
 
         if save_dir == "":
             # Not saving locally.
-            return False
+            print("[remote] save_dir is empty; capture remains on remote device")
+            return True
 
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
