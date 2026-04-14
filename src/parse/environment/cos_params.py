@@ -1,3 +1,7 @@
+'''
+author: v_sycisong
+LastEditors: v_sycisong
+'''
 """
 author: v_sycisong
 LastEditors: v_sycisong
@@ -35,6 +39,7 @@ class CosParams:
             "build_num": self.build_num,
             "tex_quality": self.tex_quality,
             "rdc_id": self.rdc_id,
+            "time": self.time_str,
             "map_name": self.map_name,
         }
 
