@@ -98,7 +98,19 @@ class TCPServerTask:
                             run_command(conn, command, "launch app", remote_object.launch_capture_app)
 
                         elif command == CaptureFrameCommandType.APP_CAPTURE:
-                            run_command(conn, command, "capture app frame", lambda: remote_object.capture(save_dir=cfg.save_dir))
+                            save_name = command_json.get("save_name", "")
+                            if save_name is None:
+                                save_name = ""
+                            else:
+                                save_name = str(save_name)
+                            def capture_app_frame():
+                                if save_name:
+                                    print(f"[tcp] capture will stay on remote device as: {save_name}")
+                                else:
+                                    print("[tcp] save_name is empty; capture will keep RenderDoc default name")
+                                return remote_object.capture(file_name=save_name, save_dir="")
+
+                            run_command(conn, command, "capture app frame", capture_app_frame)
 
                         elif command == CaptureFrameCommandType.SET_DIR:
                             new_path = command_json.get("new_path")
