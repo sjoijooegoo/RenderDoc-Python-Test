@@ -95,7 +95,7 @@ class RenameRdcTask:
 
             print(f"rename_rdc done: {len(temp_records)} files in {save_dir}")
         except Exception as e:
-            print(f"rename_rdc_task error: {e}")
+            task_manager.emit_error_output(e)
 
 
 @task_manager.manager.register

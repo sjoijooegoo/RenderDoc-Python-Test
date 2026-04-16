@@ -7,7 +7,7 @@ BIN_DIR="../bin"
 
 echo "[1/3] 开始打包..."
 # -F: 单文件, --clean: 清理缓存, --name: 指定输出文件名
-$PYINSTALLER_PATH -F --clean --name rdc_tool_linux ../src/main.py
+$PYINSTALLER_PATH -F --clean --name rdc_tool_linux --hidden-import parse.environment.cos_params ../src/main.py
 
 if [ $? -ne 0 ]; then
     echo "[错误] 打包失败！"

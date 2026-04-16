@@ -1,7 +1,3 @@
-'''
-author: v_sycisong
-LastEditors: v_sycisong
-'''
 """
 author: v_sycisong
 LastEditors: v_sycisong

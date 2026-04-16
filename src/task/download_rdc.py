@@ -4,6 +4,7 @@ import re
 import shutil
 import zipfile
 from pathlib import Path
+import sys
 import requests
 from requests.auth import HTTPBasicAuth
 from urllib3.exceptions import InsecureRequestWarning
@@ -42,8 +43,8 @@ def _clean_directory(directory: Path) -> None:
 def _flatten_extracted_rdc_files(output_dir: Path) -> int:
     rdc_files = sorted([path for path in output_dir.rglob("*.rdc") if path.is_file()])
     if not rdc_files:
-        raise FileNotFoundError(f"no .rdc file found after extract: {output_dir}")
-
+        task_manager.emit_error_output(f"no .rdc file found after extract: {output_dir}")
+        sys.exit(-1)
     moved_count = 0
     for src in rdc_files:
         if src.parent == output_dir:
@@ -51,15 +52,8 @@ def _flatten_extracted_rdc_files(output_dir: Path) -> int:
 
         target = output_dir / src.name
         if target.exists():
-            stem = target.stem
-            suffix = target.suffix
-            index = 1
-            while True:
-                candidate = output_dir / f"{stem}_{index}{suffix}"
-                if not candidate.exists():
-                    target = candidate
-                    break
-                index += 1
+            src.unlink(missing_ok=True)
+            continue
 
         src.replace(target)
         moved_count += 1

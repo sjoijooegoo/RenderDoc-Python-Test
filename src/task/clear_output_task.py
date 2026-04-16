@@ -47,7 +47,7 @@ class ClearOutputTask:
             removed_count = _clear_directory(target_dir)
             print(f"clear_output done: removed={removed_count}, dir={target_dir}")
         except Exception as exc:
-            print(f"clear_output_task error: {exc}")
+            task_manager.emit_error_output(exc)
 
 
 @task_manager.manager.register

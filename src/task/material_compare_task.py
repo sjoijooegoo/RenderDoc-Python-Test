@@ -281,4 +281,4 @@ class MaterialCompareTask:
                 f"unchanged={summary.get('unchanged', 0)}"
             )
         except Exception as exc:
-            print(f"rdc_material_compare_task error: {exc}")
+            task_manager.emit_error_output(exc)

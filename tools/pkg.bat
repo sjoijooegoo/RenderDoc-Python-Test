@@ -5,7 +5,7 @@ set PYINSTALLER_PATH=C:\Users\v_sycisong\AppData\Local\Programs\Python\Python310
 set BIN_DIR=..\bin
 
 echo [1/3] start packaging...
-%PYINSTALLER_PATH% -F --clean --name rdc_tool_win ..\src\main.py
+%PYINSTALLER_PATH% -F --clean --name rdc_tool_win --hidden-import parse.environment.cos_params ..\src\main.py
 
 if %ERRORLEVEL% NEQ 0 (
     echo [error] package failed

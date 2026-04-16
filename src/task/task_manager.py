@@ -8,6 +8,11 @@ from typing import Dict, List, Type
 from common import cfg
 
 
+def emit_error_output(error) -> None:
+    error_msg = str(error).replace("\r", " ").replace("\n", " ").replace(" ", "_")
+    print(f"::set-output name=error_msg::{error_msg}", flush=True)
+
+
 class TaskManager:
     def __init__(self):
         self.parser = argparse.ArgumentParser(description="RenderDoc automation tool")
@@ -46,7 +51,11 @@ class TaskManager:
         if task is None:
             print(f"[task_manager] skip unknown task: {task_id}")
             return
-        task.execute(args, params)
+        try:
+            task.execute(args, params)
+        except Exception as exc:
+            emit_error_output(exc)
+            raise
 
     def _run_hook_tasks(
         self,

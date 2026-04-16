@@ -300,7 +300,7 @@ class ParseRdcTask:
             _parse_single_rdc(rdc_path, params, output_folder_name)
 
         except Exception as exc:
-            print(f"rdc_parse_task error: {exc}")
+            task_manager.emit_error_output(exc)
 
 
 @task_manager.manager.register
@@ -321,7 +321,8 @@ class ParseRdcBatchTask:
             dir_path = _resolve_path(params.get("dir", params.get("save_dir", cfg.save_dir)))
             rdc_files = _list_rdc_files(dir_path)
             if not rdc_files:
-                raise RuntimeError(f"no .rdc files found in {dir_path}")
+                task_manager.emit_error_output(f"no .rdc files found in {dir_path}")
+                sys.exit(-1)
 
             output_value = params.get("output") or params.get("ouput")
             if output_value is None or not str(output_value).strip():
@@ -366,6 +367,9 @@ class ParseRdcBatchTask:
 
             if failed_results:
                 failed_names = ", ".join(str(item.get("rdc_name", "")) for item in failed_results)
+                task_manager.emit_error_output(
+                    f"rdc_parse_batch failed={len(failed_results)} [{failed_names}]"
+                )
                 print(
                     f"rdc_parse_batch done: count={len(rdc_files)}, workers={workers}, "
                     f"failed={len(failed_results)} [{failed_names}]"
@@ -373,4 +377,5 @@ class ParseRdcBatchTask:
             else:
                 print(f"rdc_parse_batch done: count={len(rdc_files)}, workers={workers}")
         except Exception as exc:
-            print(f"rdc_parse_batch_task error: {exc}")
+            task_manager.emit_error_output(exc)
+            sys.exit(-1)
