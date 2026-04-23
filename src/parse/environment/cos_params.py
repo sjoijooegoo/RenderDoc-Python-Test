@@ -1,3 +1,7 @@
+'''
+author: v_sycisong
+LastEditors: v_sycisong
+'''
 """
 author: v_sycisong
 LastEditors: v_sycisong
@@ -17,7 +21,7 @@ class CosParams:
         self.build_num: str = os.getenv("BuildNum", "1234")
         self.tex_quality: str = os.getenv("TexQuality", "1")
         self.map_name: str = os.getenv("RunMap", "Forest_WP")
-        self.time_str: str = datetime.now().strftime("%Y%m%d%H%M")
+        self.time_str: str = os.getenv("Time", datetime.now().strftime("%m%d_%H%M"))
         self.rand_str: str = uuid.uuid4().hex[:8]
         self.rdc_id: str = self._build_rdc_id(rdc_path)
 

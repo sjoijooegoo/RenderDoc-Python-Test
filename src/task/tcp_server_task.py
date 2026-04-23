@@ -56,7 +56,8 @@ def run_command(conn, command: int, action_name: str, action):
         return False
 
     print(f"[tcp] {action_name} done")
-    send_response(conn, command, True)
+    msg = "" if result is None or result is True else str(result)
+    send_response(conn, command, True, msg)
     return True
     
     

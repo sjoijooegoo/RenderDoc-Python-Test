@@ -376,7 +376,7 @@ class RemoteObject:
         if save_dir == "":
             # Not saving locally.
             print("[remote] save_dir is empty; capture remains on remote device")
-            return True
+            return cap_path
 
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
@@ -393,4 +393,4 @@ class RemoteObject:
             os.makedirs(file_dir, exist_ok=True)
         self.remote_server.CopyCaptureFromRemote(cap_path, file_path, None)
         print(f"Saved to: {file_path}")
-        return True
+        return cap_path
